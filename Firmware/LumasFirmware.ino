@@ -8,6 +8,7 @@
 #include <HTTPClient.h>
 #include <HTTPUpdate.h>
 //#include <WiFiUdp.h> //for getting google sheet
+#include <ArduinoJson.h>
 
 #include <RotaryEncoder.h>
 
@@ -34,7 +35,7 @@ int colorIndex=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.19"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.12"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -175,7 +176,7 @@ void setup_wifi() {
   Serial.println();
 
   if(WiFi.status()!=WL_CONNECTED){ //launch wifi manager in this block
-    //String networkName=strcat(strcat(clientName,"'s Heart Setup - "),WiFi.macAddress().c_str());
+    //String networkName=strcat(strcat(clientName,"'s Lumas Setup - "),WiFi.macAddress().c_str());
 
     char bufNetName[30];
     strcpy(bufNetName,clientName);
@@ -205,9 +206,119 @@ void setup_wifi() {
   Serial.println(WiFi.SSID());
 }
 
+String httpGet(String url){
+  String httpResult;
+  HTTPClient https;
+  Serial.println("Requesting " + url);
+  if (https.begin(url)) {
+    int httpCode = https.GET();
+    Serial.println("============== Response code: " + String(httpCode));
+    if (httpCode > 0) {
+      //Serial.println(https.getString());
+      //Serial.println("-----END RESULT-----");
+      httpResult=https.getString();
+      Serial.println(httpResult);
+      https.end();
+      }else {
+        Serial.printf("[HTTPS] Unable to connect\n");
+    }
+    return httpResult;
+  }else{
+    Serial.println("some error probably");
+  }
+}
+
+
 void loadClientSpecificVariables(){
 
-  getGoogleSheet(); //eventually should use a real database, not google sheets
+  Serial.println("STARTING THE NEW FANCY API PARTTTT");
+  Serial.println("STARTING THE NEW FANCY API PARTTTT");
+  Serial.println("STARTING THE NEW FANCY API PARTTTT");
+
+  //STEP 1: Find this client in the database via MAC Address
+  String firstURL= "http://lumas.live:4000/api/hearts/" + WiFi.macAddress();
+  String heartRow = httpGet(firstURL);
+
+  // Parse JSON
+  StaticJsonDocument<256> doc; // Adjust size as needed
+  DeserializationError error = deserializeJson(doc, heartRow);
+  if (error) {
+    Serial.print("JSON deserialization failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  // Access the values
+  const char* id = doc["id"];
+  const char* group = doc["group"];
+  const char* heartName = doc["name"];
+  Serial.printf("Extracted values: id=%s, group=%s, name=%s\n", id, group, heartName);
+  Serial.println(group);
+
+
+
+  //STEP 2: Using this client's group name, look up others!
+  int countNumOtherClientsInGroup=0;
+  char* otherClients[6];
+  if(strcmp(group,"None")!=0){
+    String groupURL = "http://lumas.live:4000/api/groups/";
+  
+    String fullURL = groupURL + group;
+    Serial.print("FULL URL: ");
+    Serial.println(fullURL);
+    
+    String groupInfo = httpGet(fullURL);
+  
+    // Parse JSON
+    StaticJsonDocument<256> docTwo; // Adjust size as needed
+    DeserializationError errorTwo = deserializeJson(docTwo, groupInfo);
+    if (errorTwo) {
+      Serial.print("JSON deserialization failed: ");
+      Serial.println(errorTwo.c_str());
+      return;
+    }
+  
+    // Extract array
+    JsonArray heartIDs = docTwo["hearts"].as<JsonArray>();
+    Serial.println("Heart IDs:");
+    countNumOtherClientsInGroup=0;
+    for (const char* heartID : heartIDs) {
+      if(strcmp(WiFi.macAddress().c_str(),heartID)!=0){ //As long as this isn't our own MAC
+        otherClients[countNumOtherClientsInGroup] = (char*)heartID;  
+        Serial.println(heartID);
+        countNumOtherClientsInGroup++;
+      }
+    }
+
+  }
+
+  //STEP 3: load variables in to local memory
+
+  strcpy(clientName,heartName);
+  //COPY THIS NAME IN TO EEPROM IF IT DIFFERS, cause it is used in wifi setup pre-network connection
+  EEPROM.begin(173);
+  char ch_clientName[20];
+  EEPROM.get(3,ch_clientName);
+  EEPROM.end();
+  if(strcmp(ch_clientName,clientName)!=0){ //if different, put new name in to EEPROM
+    Serial.println("Name updated, updating local EEPROM value");
+    EEPROM.begin(173);
+    EEPROM.put(3,clientName);
+    EEPROM.end();
+  }
+  strcpy(groupName,group);
+  //modelNumber=atoi((httpResult.substring(nthIndex(httpResult,'\"',5)+1,nthIndex(httpResult,'\"',6))).c_str());
+  modelNumber=2; //currently not in AWS database
+  
+  if(strcmp(group,"None")!=0){
+    numOtherClientsInGroup=countNumOtherClientsInGroup;
+    for(int i=0;i<countNumOtherClientsInGroup;i++){
+      strcpy(otherClientsInGroup[i],otherClients[i]);
+    }
+  }
+
+  //getGoogleSheet(); //eventually should use a real database, not google sheets
+  
   //EEPROM method has been deprecated and replaced with Google Sheets
 
   BubbleSort(otherClientsInGroup,numOtherClientsInGroup); //sort the array we just loaded so that indicator lights are consistant
@@ -344,10 +455,8 @@ void BubbleSort (char arry[][20], int m){ //m is number of elements
 
 void firmwareUpdate(){
 
-    Serial.println("WARNING: FIRMWARE UPDATES ARE CURRENTLY DISABLED!!!");
-    if(false){
-    #define URL_fw_Version "https://raw.githubusercontent.com/BlaineAtkins/RemoteHearts/main/currentFirmwareVersion.txt"
-    #define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/RemoteHearts/main/currentFirmware.bin"
+    #define URL_fw_Version "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/currentFirmwareVersion.txt"
+    #define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/LumasFirmware.bin"
     
     WiFiClientSecure client;
     client.setInsecure(); //prevents having the update the CA certificate periodically
@@ -421,7 +530,6 @@ void firmwareUpdate(){
             break;
         }
     }
-    } //comment this out to get rid of false statement
 }
 
 void getGoogleSheet(){
@@ -535,23 +643,16 @@ int nthIndex(String str,char ch, int N){
 }
 
 void updateTopicVariables(){
-  strcpy(groupTopic,"BlaineProjects/RemoteHearts/groups/");
+  strcpy(groupTopic,"LumasHearts/groups/");
   strcat(groupTopic,groupName);
   Serial.println(groupName);
   strcpy(multiColorTopic,""); //re-initalize this to empty!! Otherwise it overflows when updated
   strcat(multiColorTopic,groupTopic);
   strcat(groupTopic,"/color");
   strcat(multiColorTopic,"/multicolorMode");
-  strcpy(adminTopic,"BlaineProjects/RemoteHearts/admin");
-  strcpy(consoleTopic,"BlaineProjects/RemoteHearts/console");
+  strcpy(adminTopic,"LumasHearts/admin");
+  strcpy(consoleTopic,"LumasHearts/console");
 }
-
-
-
-
-
-
-
 
 
 
@@ -563,7 +664,7 @@ void updateTopicVariables(){
 void setup() {
 
   Serial.begin(9600);
-  delay(1000);
+  delay(200);
 
   encoder = new RotaryEncoder(ENCODER_PIN_IN1, ENCODER_PIN_IN2, RotaryEncoder::LatchMode::TWO03);
   attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_IN1), checkEncoderPosition, CHANGE);
@@ -781,7 +882,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       }
     }
     
-  }else if(strcmp(topic,groupTopic)==0){
+  }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"None")==0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
     
 
     String strPayload = String((char*)payload);
@@ -896,7 +997,7 @@ void reconnect() {
     if (client.connect(WiFi.macAddress().c_str())){
       Serial.println("connected");
       if(firstConnectAttempt){
-        client.publish("BlaineProjects/RemoteHearts/connectionLog",("boot,"+WiFi.macAddress()).c_str());
+        client.publish("LumasHearts/connectionLog",("boot,"+WiFi.macAddress()).c_str());
       }
       firstConnectAttempt=false;
       receivedColorMode=false;
@@ -987,7 +1088,29 @@ void confirmColorMode(){ //every day, re-publish the current color mode to the M
   }
 }
 
+unsigned long btnPressedAt=0;
+bool btnCurrentlyPressed=false;
+bool longPressMsgSent=false;
+int longPressTime=2000;
+
 void loop(){
+
+  if(!digitalRead(14)){
+    if(!btnCurrentlyPressed){
+      btnCurrentlyPressed=true;
+      btnPressedAt=millis();
+    }else{
+      if(millis()-btnPressedAt>longPressTime && !longPressMsgSent){
+        Serial.println("LONG PRESS");
+        client.publish("LumasHearts/hearts/verify",("longPress, " + WiFi.macAddress()).c_str());
+        longPressMsgSent=true;
+      }
+    }
+  }else{
+    btnCurrentlyPressed=false;
+    longPressMsgSent=false;
+  }
+  
   encoder->tick(); // just call tick() to check the state.
 
   if (!client.connected()) {
