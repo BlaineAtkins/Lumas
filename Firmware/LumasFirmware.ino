@@ -9,8 +9,12 @@
 #include <HTTPUpdate.h>
 //#include <WiFiUdp.h> //for getting google sheet
 #include <ArduinoJson.h>
+#include <WiFiClientSecure.h>
 
 #include <RotaryEncoder.h>
+
+//to mark new code as valid and prevent rollback. See  esp_ota_mark_app_valid_cancel_rollback() in code
+#include <esp_ota_ops.h>
 
 //Rotary Encoder setup
 #define ENCODER_PIN_IN1 18
@@ -35,7 +39,7 @@ int colorIndex=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.12"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.13"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -662,6 +666,9 @@ void updateTopicVariables(){
 
 
 void setup() {
+  //Prevent rollback to previous firmware
+  //WEIRD NOTE: automatic rollback only occors automatically sometimes. Maybe dependant on the last computer that uploaded serial code to it?
+  esp_ota_mark_app_valid_cancel_rollback();
 
   Serial.begin(9600);
   delay(200);
