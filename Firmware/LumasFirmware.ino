@@ -39,7 +39,7 @@ int colorIndex=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.13"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.14"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -235,16 +235,13 @@ String httpGet(String url){
 
 void loadClientSpecificVariables(){
 
-  Serial.println("STARTING THE NEW FANCY API PARTTTT");
-  Serial.println("STARTING THE NEW FANCY API PARTTTT");
-  Serial.println("STARTING THE NEW FANCY API PARTTTT");
 
   //STEP 1: Find this client in the database via MAC Address
   String firstURL= "http://lumas.live:4000/api/hearts/" + WiFi.macAddress();
   String heartRow = httpGet(firstURL);
 
   // Parse JSON
-  StaticJsonDocument<256> doc; // Adjust size as needed
+  StaticJsonDocument<512> doc; // Adjust size as needed
   DeserializationError error = deserializeJson(doc, heartRow);
   if (error) {
     Serial.print("JSON deserialization failed: ");
@@ -889,7 +886,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       }
     }
     
-  }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"None")==0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
+  }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"None")!=0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
     
 
     String strPayload = String((char*)payload);
@@ -909,7 +906,10 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
     
     char ch_fromClientMac[20];
     fromClientMac.toCharArray(ch_fromClientMac,fromClientMac.length()+1);
-    if(strcmp(ch_fromClientMac,WiFi.macAddress().c_str())!=0){ //DO NOT PROCESS MESSAGE IF IT IS FROM OURSELVES
+    char ch_fromClientName[31];
+    fromClientName.toCharArray(ch_fromClientName,fromClientName.length()+1);
+
+    if((strcmp(ch_fromClientMac,WiFi.macAddress().c_str())!=0) || (strcmp(ch_fromClientName,"WEB_APP")==0)){ //DO NOT PROCESS MESSAGE IF IT IS FROM OURSELVES
       char buf[receivedNumber.length()+1];
       receivedNumber.toCharArray(buf, receivedNumber.length()+1);
   
@@ -1005,6 +1005,7 @@ void reconnect() {
       Serial.println("connected");
       if(firstConnectAttempt){
         client.publish("LumasHearts/connectionLog",("boot,"+WiFi.macAddress()).c_str());
+        client.publish("startLocationUpdater","start"); //tell EC2 locationUpdater script to run. It will see this heart in the mosquitto logs and update it's IP and location in the AWS database
       }
       firstConnectAttempt=false;
       receivedColorMode=false;
