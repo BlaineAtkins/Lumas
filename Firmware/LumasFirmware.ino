@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <DNSServer.h>
 #include <WiFiManager.h>         // quotation marks usues library in sketch folder which i can customize the webpage for. PLEASE NOTE -- in earlier versions, WiFiManager.cpp had digitalWrite() and analogWrite() lines manually added by Blaine for the status LED. Now that the status LEDs use neopixel, the library version with those lines should NOT be used, otherwise the LED strip will flicker along with other unexpected behavior
-//#include <WiFiManager.h>
+//include <"src\WiFiManager.h">
 #include <PubSubClient.h> //for mqtt
 #include <EEPROM.h>
 #include <HTTPClient.h>
@@ -39,7 +39,7 @@ int colorIndex=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.14"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.15"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -196,6 +196,7 @@ void setup_wifi() {
 
     // Switch wifiManager config portal IP from default 192.168.4.1 to 8.8.8.8. This ensures auto-load on some android devices which have 8.8.8.8 hard-coded in the OS.
     manager.setAPStaticIPConfig(IPAddress(8,8,8,8), IPAddress(8,8,8,8), IPAddress(255,255,255,0));
+    manager.setTitle("Lumas Config, \nMAC: - "+WiFi.macAddress());
 
     manager.setTimeout(60*5); //if no pages are loaded on the setup AP within this many seconds, reboot in an attempt to connect to the saved network again.
     if(!manager.autoConnect(networkName.c_str(),"")){
@@ -1098,8 +1099,8 @@ void confirmColorMode(){ //every day, re-publish the current color mode to the M
 
 unsigned long btnPressedAt=0;
 bool btnCurrentlyPressed=false;
-bool longPressMsgSent=false;
-int longPressTime=2000;
+bool shortPressMsgSent=false;
+int shortPressTime=50;
 
 void loop(){
 
@@ -1108,15 +1109,15 @@ void loop(){
       btnCurrentlyPressed=true;
       btnPressedAt=millis();
     }else{
-      if(millis()-btnPressedAt>longPressTime && !longPressMsgSent){
-        Serial.println("LONG PRESS");
-        client.publish("LumasHearts/hearts/verify",("longPress, " + WiFi.macAddress()).c_str());
-        longPressMsgSent=true;
+      if(millis()-btnPressedAt>shortPressTime && !shortPressMsgSent){
+        Serial.println("SHORT BTN PRESS");
+        client.publish("LumasHearts/hearts/verify",("shortPress, " + WiFi.macAddress()).c_str());
+        shortPressMsgSent=true;
       }
     }
   }else{
     btnCurrentlyPressed=false;
-    longPressMsgSent=false;
+    shortPressMsgSent=false;
   }
   
   encoder->tick(); // just call tick() to check the state.
@@ -1192,7 +1193,7 @@ void loop(){
   }
   */
 
-  if(posChangedBy!=0 && millis()-lastSentColorAt>100){ //while user is turning knob, only send value every half second to avoid flooding MQTT topic  
+  if(posChangedBy!=0 && millis()-lastSentColorAt>100){ //while user is turning knob, only send value every ____ to avoid flooding MQTT topic  
     itoa(currentColor, sendVal,10);
     strcat(sendVal,",");
     strcat(sendVal,WiFi.macAddress().c_str());
