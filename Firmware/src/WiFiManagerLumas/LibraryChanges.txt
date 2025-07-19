@@ -1,0 +1,4 @@
+1. Introduced setMac function to show Mac Address in Captive Portal.
+Search for "BlaineModified" in WiFiManager.cpp, WiFiManager.h, and wm_strings_en.h
+
+2. Probably going to modify the "successfully connected" message
