@@ -72,7 +72,7 @@ const char HTTP_FORM_PARAM_HEAD[]  PROGMEM = "<hr><br/>";
 const char HTTP_FORM_PARAM[]       PROGMEM = "<br/><input id='{i}' name='{n}' maxlength='{l}' value='{v}' {c}>\n"; // do not remove newline!
 
 const char HTTP_SCAN_LINK[]        PROGMEM = "<br/><form action='/wifi?refresh=1' method='POST'><button name='refresh' value='1'>Refresh</button></form>";
-const char HTTP_SAVED[]            PROGMEM = "<div class='msg'>Saving Credentials<br/>Trying to connect ESP to network.<br />If it fails reconnect to AP to try again</div>";
+const char HTTP_SAVED[]            PROGMEM = "<div class='msg'><b>Attempting to connect to WiFi...</b><br>The status LED on your Lumas should become green or blue within 30 seconds. If it stays orange, WiFi setup was unsuccesful. Reconnect to the Setup WiFi and try again.<br><br><b>Once connected to WiFi, you can manage your Lumas and join a group at <a href=\"https://app.lumas.live\">https://app.lumas.live</a></b></div>"; //BlaineModified
 const char HTTP_PARAMSAVED[]       PROGMEM = "<div class='msg S'>Saved<br/></div>";
 const char HTTP_END[]              PROGMEM = "</div></body></html>";
 const char HTTP_ERASEBTN[]         PROGMEM = "<br/><form action='/erase' method='get'><button class='D'>Erase WiFi config</button></form>";

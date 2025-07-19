@@ -2,3 +2,4 @@
 Search for "BlaineModified" in WiFiManager.cpp, WiFiManager.h, and wm_strings_en.h
 
 2. Probably going to modify the "successfully connected" message
+Search wm_strings_en.h for BlaineModified
