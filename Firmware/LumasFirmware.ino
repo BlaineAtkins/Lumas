@@ -1,8 +1,8 @@
 #include <Adafruit_NeoPixel.h>
 #include <WiFi.h>
 #include <DNSServer.h>
-#include <WiFiManager.h>         // quotation marks usues library in sketch folder which i can customize the webpage for. PLEASE NOTE -- in earlier versions, WiFiManager.cpp had digitalWrite() and analogWrite() lines manually added by Blaine for the status LED. Now that the status LEDs use neopixel, the library version with those lines should NOT be used, otherwise the LED strip will flicker along with other unexpected behavior
-//include <"src\WiFiManager.h">
+//#include <WiFiManager.h>         // quotation marks usues library in sketch folder which i can customize the webpage for. PLEASE NOTE -- in earlier versions, WiFiManager.cpp had digitalWrite() and analogWrite() lines manually added by Blaine for the status LED. Now that the status LEDs use neopixel, the library version with those lines should NOT be used, otherwise the LED strip will flicker along with other unexpected behavior. /// BREAKING NEWS: We have once again modified the library, this time to display the MAC in the captive portal. This version of the library has been renamed to WiFiManagerLumas
+#include <src/WiFiManagerLumas/WiFiManagerLumas.h>
 #include <PubSubClient.h> //for mqtt
 #include <EEPROM.h>
 #include <HTTPClient.h>
@@ -196,7 +196,10 @@ void setup_wifi() {
 
     // Switch wifiManager config portal IP from default 192.168.4.1 to 8.8.8.8. This ensures auto-load on some android devices which have 8.8.8.8 hard-coded in the OS.
     manager.setAPStaticIPConfig(IPAddress(8,8,8,8), IPAddress(8,8,8,8), IPAddress(255,255,255,0));
-    manager.setTitle("Lumas Config, \nMAC: - "+WiFi.macAddress());
+    //manager.setTitle("Lumas Config <br>MAC: - "+WiFi.macAddress());
+    manager.setTitle("Lumas Config");
+
+    manager.setMac(WiFi.macAddress()); //Ok. So. setMac is a custom function I added to the library. Declared in WiFiManager.h, used in WiFiManager.cpp, and affecting wm_strings_en.h (ctrl+f for "blaineModified")
 
     manager.setTimeout(60*5); //if no pages are loaded on the setup AP within this many seconds, reboot in an attempt to connect to the saved network again.
     if(!manager.autoConnect(networkName.c_str(),"")){
@@ -1002,10 +1005,10 @@ void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (client.connect(WiFi.macAddress().c_str())){
+    if (client.connect(WiFi.macAddress().c_str(),"","","LumasHearts/onlineStatus",0,false,("Offline,"+WiFi.macAddress()).c_str())){
       Serial.println("connected");
       if(firstConnectAttempt){
-        client.publish("LumasHearts/connectionLog",("boot,"+WiFi.macAddress()).c_str());
+        client.publish("LumasHearts/onlineStatus",("Online,"+WiFi.macAddress()).c_str());
         client.publish("startLocationUpdater","start"); //tell EC2 locationUpdater script to run. It will see this heart in the mosquitto logs and update it's IP and location in the AWS database
       }
       firstConnectAttempt=false;
