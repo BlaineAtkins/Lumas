@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <DNSServer.h>
 //#include <WiFiManager.h>         // quotation marks usues library in sketch folder which i can customize the webpage for. PLEASE NOTE -- in earlier versions, WiFiManager.cpp had digitalWrite() and analogWrite() lines manually added by Blaine for the status LED. Now that the status LEDs use neopixel, the library version with those lines should NOT be used, otherwise the LED strip will flicker along with other unexpected behavior. /// BREAKING NEWS: We have once again modified the library, this time to display the MAC in the captive portal. This version of the library has been renamed to WiFiManagerLumas
-#include <src/WiFiManagerLumas/WiFiManagerLumas.h>
+#include "src/WiFiManagerLumas/WiFiManagerLumas.h"
 #include <PubSubClient.h> //for mqtt
 #include <EEPROM.h>
 #include <HTTPClient.h>
@@ -39,7 +39,7 @@ int colorIndex=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.16"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.17"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -62,7 +62,7 @@ bool receivedColorMode=false; //This variable is set true whenever we receive th
 
 #define NUMPIXELS 12
 Adafruit_NeoPixel lights(NUMPIXELS, 27, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel indicator(NUMPIXELS, 4, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel indicator(1, 4, NEO_GRB + NEO_KHZ800);
 
 const char* mqtt_server = "lumas.live";
 WiFiClient espClient;
@@ -695,6 +695,7 @@ void setup() {
     statusLEDs(100,0,0,i);
   }
   
+  
   //finsish lights setup
   lights.begin();
   lights.clear();
@@ -1080,9 +1081,9 @@ void pingAndStatus(){
     }
   }
   if(aClientIsOnline){
-    statusLEDs(0,25,0,0);
+    statusLEDs(0,80,0,0); //25 is almost not visible next to a window. 50 is faint but solidly visible. 80 is perhaps on the dimmer side, but a solidly acceptable color for an indicator light
   }else{
-    statusLEDs(0,0,25,0);
+    statusLEDs(0,0,25,0); 
   }
   
 }
@@ -1170,8 +1171,6 @@ void loop(){
   
 
 
-  
-  //rawBrightness=analogRead(35)/16;
   colorKnob=colorIndex; //these variables represent the same thing. It used to be called colorKnob, but the new code I wrote it as colorIndex, so for the time being I'm just setting the old name equal to the new name until I ensure the code's working right
 
 
@@ -1185,6 +1184,34 @@ void loop(){
   if(isDark){
     int temp=0; //see commented out code below to modify
   }
+  int thresholdBrightness=180;
+
+
+  //The below figures out the ambient brightness of the room, based on a 10th order polynomial fit of data collection
+  int b=brighnessFactor/16;
+  int c=colorIndex;
+  double threshold=calculateBrightnessThreshold(b,c); //calculateBrightnessThreshold
+
+  /*Serial.println(c);
+  Serial.print("\t");
+  Serial.print(b);
+  Serial.print("\t");
+
+  Serial.print(rawBrightness);
+  Serial.print("\t");
+  Serial.print(threshold);
+  Serial.print("\t");
+  
+
+  if(rawBrightness<threshold){
+    Serial.println("dim");
+  }else{
+    Serial.print("bright");
+  }
+  //Serial.println("");
+*/
+
+
   /*
   if(isDark && digitalRead(D0) && digitalRead(D6)){ //if it's dark, dim the lights and ignore the brightness knob
     lights.setBrightness(5);
@@ -1276,4 +1303,45 @@ void loop(){
   Serial.println(stripColors[0][2]);
   Serial.println(brighnessFactor);delay(1);*/
   lights.show();
+}
+
+//Give the current brightness b and color c that the heart is set to, and it will return the threshold of a "dark" room.
+//The parameters (constants of the polynomial equation) are obtained by by running the PhotoResistor Calibration experiment and analysis
+double calculateBrightnessThreshold(double b, double c) {
+    // The 66 optimized coefficients from your program's output
+    // Note: The order must match the nested loops below
+    const double params[66] = {
+        1.40661474e+03, -8.89724555e-01, -2.10193974e-02, 2.46326838e-04,
+        -6.42576675e-07, -2.83601051e-09, 2.34030601e-11, -6.76396117e-14,
+        1.00579625e-16, -7.66603184e-20, 2.37064871e-23, -3.89479094e+00,
+        -1.19406348e-01, 2.60265737e-03, -1.10591439e-05, -2.41880700e-08,
+        2.72285718e-10, -7.31926760e-13, 9.06326708e-16, -5.28297420e-19,
+        1.13347866e-22, 9.12202162e-01, 1.59873048e-03, -4.27394787e-05,
+        2.72696775e-07, -8.27112834e-10, 1.19205151e-12, -5.85548703e-16,
+        -2.64756572e-19, 2.58909964e-22, -1.87959983e-02, 8.22251686e-06,
+        2.24891931e-07, -1.03892880e-09, 2.58902993e-12, -4.01288622e-15,
+        3.32190622e-18, -1.09541462e-21, 1.51212575e-04, -3.00454234e-07,
+        -7.48563771e-10, 2.82924917e-12, -2.63329387e-15, 1.07750517e-18,
+        -2.40538516e-22, 3.75189283e-08, 2.75900790e-09, 2.96533441e-14,
+        -7.72570754e-15, 5.94040407e-18, -1.08724127e-21, -1.02094005e-08,
+        -1.18971541e-11, 1.07818546e-14, 7.04151744e-18, -4.71521571e-21,
+        8.40415379e-11, 2.37404048e-14, -3.02032433e-17, 1.28943661e-21,
+        -3.27772689e-13, -1.49909539e-17, 2.44321530e-20, 6.49770875e-16,
+        -6.80858148e-21, -5.26938205e-19
+    };
+
+    //Below this is horner's method. It's a way to calculate the above polynomial without impercise calculation of very large and very small numbers accumulating and causing wildly innacurate results
+    double z = 0.0;
+    int k = 0;
+    int total_degree = 10;
+    
+    for (int i = 0; i <= total_degree; ++i) {
+        for (int j = 0; j <= total_degree - i; ++j) {
+            double term_val = params[k] * pow(b, i) * pow(c, j);
+            z += term_val;
+            k++;
+        }
+    }
+    
+    return z;
 }
