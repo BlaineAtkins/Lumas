@@ -5,14 +5,8 @@
   You can generate an equation from the results using the python curve fitting program
 */
 
-//const char* ssid = "WeDontHaveWifi";
-//const char* password = "228baldwin";
-//const char* ssid = "Blaine-hotspot";
-//const char* password = "cowsrock";
-//const char* ssid = "Blaine-Laptop-Hotspot";
-//const char* password = "12345678";
-const char* ssid = "Music Madness";
-const char* password = "123eyesonme";
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
 bool logMAC = true; //true = send MAC to python program running on PC. Do not download firmware if MAC logging fails. false = Don't attempt PC connection, just download firmware immediately
 const char* serverName = "http://10.0.0.105:8000";
 
