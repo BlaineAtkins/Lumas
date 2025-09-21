@@ -1,0 +1,7 @@
+1. To collect data, set up the Lumas in a room that's right on the auto-dim threshold. That is, if the room was any darker, you'd want the heart to be dim. Better if the room is slightly too bright than slightly too dark.
+
+2. Next, set up a PC on the same network and run the PhotoResistorReceiveValues python program on it. Make sure to change the IP address in both that and the PhotoResistorSendValues program.
+
+3. After that, upload PhotoResistorSendValues to a Lumas and run it. It will take about 12 hours to complete.
+
+4. You can generate an equation from the results using the python curve fitting program
