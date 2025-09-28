@@ -39,7 +39,7 @@ int lastBrighnessFactor=500; //initialized to a value very different from what i
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.18"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.19"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -1263,12 +1263,14 @@ void loop(){
         }
         isDark=true;
       }else{
-        //Serial.print("bright");
-        if(isDark==true){ //if it just became dark
-          updateLightsRequiredThisLoop=true;
-          brightnessLastChangedAt=millis();
+        if(rawBrightness>threshold+150){ //hysterisis attempt
+          //Serial.print("bright");
+          if(isDark==true){ //if it just became dark
+            updateLightsRequiredThisLoop=true;
+            brightnessLastChangedAt=millis();
+          }
+          isDark=false;
         }
-        isDark=false;
       }
     }
   }else{
