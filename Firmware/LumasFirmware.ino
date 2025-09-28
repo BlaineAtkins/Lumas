@@ -33,19 +33,20 @@ int stripColors[12][3]={{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},
 
 int colorIndex=0;
 
-
+int lastBrighnessFactor=500; //initialized to a value very different from what it will immediately be set to
 
 
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.17"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.18"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
 
 int numOtherClientsInGroup;//=1;
-char otherClientsInGroup[6][20]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
+char otherClientsInGroup[21][20]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
+bool otherClientsOnlineStatus[21]={false};
 char groupName[20];//="PHUSSandbox";
 int modelNumber;//=2; //1 is the original from 2021. 2 is the triple indicator neopixel version developed in 2024
 //END CLIENT SPECIFIC VARIABLES------------
@@ -55,6 +56,7 @@ unsigned long otherClientsLastPingReceived[6]={4294000000,4294000000,4294000000,
 
 char groupTopic[70]; //70 should be large enough
 char multiColorTopic[84];
+char onlineStatusTopic[84];
 char adminTopic[70];
 char consoleTopic[70]; //this topic is for hearts to publish to in response to admin commands, etc
 
@@ -97,6 +99,8 @@ unsigned long lastPingReceived;
 int timeout=30000; //time in milliseconds between pings
 
 boolean isDark;
+
+long brightnessLastChangedAt=0;
 
 
 //BELOW CODE IS FOR GOOGLE SHEETS "DATABASE" -- temporary solution that should hopefully replace EEPROM until we get a real database
@@ -510,8 +514,9 @@ void firmwareUpdate(){
     Serial.println(payload);
     if(payload.equals(FirmwareVer)) {
         Serial.println("Device already on latest firmware version");
-    }
-    else {
+    }else if(payload.equals("")){
+        Serial.println("Latest firmware version undefined. Likely you have a bad network connection.");
+    }else {
         Serial.println("New firmware detected");
         for(int i=0;i<3;i++){
           statusLEDs(150,150,150,i); //all white indicates we're in a firmware update
@@ -650,6 +655,9 @@ int nthIndex(String str,char ch, int N){
 void updateTopicVariables(){
   strcpy(groupTopic,"LumasHearts/groups/");
   strcat(groupTopic,groupName);
+  strcpy(onlineStatusTopic,"");
+  strcat(onlineStatusTopic,groupTopic);
+  strcat(onlineStatusTopic,"/onlineStatus");
   Serial.println(groupName);
   strcpy(multiColorTopic,""); //re-initalize this to empty!! Otherwise it overflows when updated
   strcat(multiColorTopic,groupTopic);
@@ -680,6 +688,7 @@ void setup() {
 
   //pinMode(34,INPUT); //light sensor input
 
+  //TODO -- this is from old darkness determination (pre-polynomial surface equation)
   int darkThresholdValue=1500;
   if(analogRead(34)<darkThresholdValue){
     isDark=true;
@@ -821,6 +830,33 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       multiColorMode=false;
     }
     Serial.println(multiColorMode);
+  }else if(strcmp(topic,onlineStatusTopic)==0){
+
+    Serial.print("Received online status: ");
+    Serial.println(String((char*)payload));
+    
+    String strPayload = String((char*)payload);
+    int firstCommaIndex=strPayload.indexOf(',');
+    int secondCommaIndex=strPayload.indexOf(',',firstCommaIndex+1);
+    String thisHeartOnline=strPayload.substring(0,firstCommaIndex);
+    String thisHeartMAC=strPayload.substring(firstCommaIndex+1);
+
+    //TODO: Blaine you are here
+    //now check if thisHeartMac is present in otherClientsInGroup, and if so (cause it should be), set the corresponding index of otherClientsOnlineStatus
+    for(int i=0;i<numOtherClientsInGroup;i++){
+      if(strcmp(thisHeartMAC.c_str(),otherClientsInGroup[i])==0){
+        Serial.print("match found, heart ");
+        Serial.println(i);
+        if(strcmp(thisHeartOnline.c_str(),"Online")==0){
+          otherClientsOnlineStatus[i]=true;
+        }else if(strcmp(thisHeartOnline.c_str(),"Offline")==0){
+          otherClientsOnlineStatus[i]=false;
+        }
+      }
+    }
+
+    //otherClientsOnlineStatus
+
   }else if(strcmp(topic,adminTopic)==0){ //an admin command
     String strPayload = String((char*)payload);
     int firstCommaIndex=strPayload.indexOf(',');
@@ -889,6 +925,9 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
         Serial.print("Now subscribed to group ");
         Serial.println(groupTopic);
       }
+      if(command=="WHOSTHERE"){
+        client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
+      }
     }
     
   }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"None")!=0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
@@ -919,13 +958,14 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       receivedNumber.toCharArray(buf, receivedNumber.length()+1);
   
       int rcvNum = atoi(buf);
-      if(rcvNum==-1){ //if other heart just came online, ignore the value (-1), but ping it to let it know we're here too and give it our value
+      if(rcvNum==-1){ //if other heart just came online, ignore the value (-1), but ping it to let it know we're here too and give it what color we're in.
         itoa(currentColor, sendVal,10);
         strcat(sendVal,",");
         strcat(sendVal,WiFi.macAddress().c_str());
         strcat(sendVal,",");
         strcat(sendVal,clientName);
         client.publish(groupTopic,sendVal);
+        client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
       }else{ //only update color from remote heart if it wasn't it's first ping to say it's online
     
         int currentColorRemote; //the color of the other heart
@@ -1006,10 +1046,10 @@ void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (client.connect(WiFi.macAddress().c_str(),"","","LumasHearts/onlineStatus",0,false,("Offline,"+WiFi.macAddress()).c_str())){
+    if (client.connect(WiFi.macAddress().c_str(),"","",onlineStatusTopic,0,false,("Offline,"+WiFi.macAddress()).c_str())){
       Serial.println("connected");
       if(firstConnectAttempt){
-        client.publish("LumasHearts/onlineStatus",("Online,"+WiFi.macAddress()).c_str());
+        client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
         client.publish("startLocationUpdater","start"); //tell EC2 locationUpdater script to run. It will see this heart in the mosquitto logs and update it's IP and location in the AWS database
       }
       firstConnectAttempt=false;
@@ -1018,7 +1058,9 @@ void reconnect() {
       //Serial.println(groupTopic);
       client.subscribe(adminTopic);
       client.subscribe(multiColorTopic);
+      client.subscribe(onlineStatusTopic);
       client.subscribe(groupTopic); //subscribe first so that when we send -1 below, we can receive the response right away
+      client.loop(); //this may be necessary to ensure we can actually receive messages before we publish -1 asking for a response
       itoa(-1, sendVal,10);
       strcat(sendVal,",");
       strcat(sendVal,WiFi.macAddress().c_str());
@@ -1047,7 +1089,12 @@ void reconnect() {
   }
 }
 
+
+
 void pingAndStatus(){
+
+  //BELOW IS OLD ONLINE DETERMINATION USING HEARTBEAT. SCROLL FURTHER DOWN FOR NEW METHOD USING ONLINE STATUS MQTT TOPIC
+  /*
   if(millis()-lastPingReceived>timeout+5000){
     //other heart is offline
     //statusLEDs(0,0,100,0);
@@ -1060,23 +1107,21 @@ void pingAndStatus(){
     strcat(sendVal,WiFi.macAddress().c_str());
     strcat(sendVal,",");
     strcat(sendVal,clientName);
-    client.publish(groupTopic,sendVal); 
+    client.publish(groupTopic,sendVal);
     lastPingSent=millis();
   }
-
+*/
 
   //ABOVE IS OLD CODE FOR SINGLE STATUS LIGHT. BELOW IS NEW CODE WITH MULTIPLE INDICATOR LIGHTS
 
   //We can assume otherClientsInGroup is sorted, as it is sorted whenever it is updated in loadClientSpecificVariables()
   //We will use the other client's position in the array as the assigned number indicator
   //the data updating happens in the callback for processing an incoming color
+  //----Take above comments with a grain of salt, I'm about to modify what's below for use with single status indicator
 
   bool aClientIsOnline=false;
   for(int i=0;i<numOtherClientsInGroup;i++){
-    if(millis()-otherClientsLastPingReceived[i]>timeout+5000){
-      //statusLEDs(0,0,50,i); //this client is offline
-    }else{
-      //statusLEDs(0,50,0,i); //this client is online
+    if(otherClientsOnlineStatus[i]){
       aClientIsOnline=true;
     }
   }
@@ -1165,63 +1210,81 @@ void loop(){
     }
   }
   
-  int brighnessFactor=4096-analogRead(35); 
-  //Serial.println(brighnessFactor);
-  //Serial.println(brighnessFactor/4096.0);
-  
-
+  bool brightnessChangedThisLoop=false;
+  int brighnessFactor=lastBrighnessFactor;
+  int tempBrightnessReading=4096-analogRead(35);
+  int antiJitterValue=80;
+  if(tempBrightnessReading>lastBrighnessFactor+antiJitterValue || tempBrightnessReading<lastBrighnessFactor-antiJitterValue){
+    brighnessFactor=tempBrightnessReading;
+    lastBrighnessFactor=tempBrightnessReading;
+    brightnessChangedThisLoop=true;
+  }
+   
 
   colorKnob=colorIndex; //these variables represent the same thing. It used to be called colorKnob, but the new code I wrote it as colorIndex, so for the time being I'm just setting the old name equal to the new name until I ensure the code's working right
 
-
-
   currentColor=colorIndex; //works with multicolor mode. On single color mode, heart changes it's local color and sends correct color, but remote heart doesn't receive it properly
-  //colorIndex=currentColor; //just flat out wrong
-
   
-  //brightness=rawBrightness; //because brightness is modified every loop, it doesn't hold it's value in non-analogRead cycles. rawBrightness retains it's og value
-
-  if(isDark){
-    int temp=0; //see commented out code below to modify
-  }
-  int thresholdBrightness=180;
-
 
   //The below figures out the ambient brightness of the room, based on a 10th order polynomial fit of data collection
-  int b=brighnessFactor/16;
+  int b;
+  if(isDark){
+    b=5;
+  }else{
+    b=brighnessFactor/16;
+  }
   int c=colorIndex;
   double threshold=calculateBrightnessThreshold(b,c); //calculateBrightnessThreshold
+  threshold=threshold+150; //seems like the experiment was done slightly too bright. Experimentally, subtracting from threshold makes it more reliably enter dim mode in dark rooms
 
-  /*Serial.println(c);
+  rawBrightness=analogRead(34);
+
+  /*
+  Serial.println(c);
   Serial.print("\t");
   Serial.print(b);
   Serial.print("\t");
+  
 
   Serial.print(rawBrightness);
   Serial.print("\t");
   Serial.print(threshold);
-  Serial.print("\t");
+  Serial.println("  :)\t");
+  */
   
-
-  if(rawBrightness<threshold){
-    Serial.println("dim");
+  bool updateLightsRequiredThisLoop=false;
+  if(digitalRead(23)){ //only do auto-dim if auto-dim switch is set.
+    if(millis()-brightnessLastChangedAt>1000){ //photoresistor takes some time to settle, so after changing brightness wait a little bit before attempting to read again (also just nice to user not to rapidly flash)
+      if(rawBrightness<threshold){
+        //Serial.println("dim");
+        if(isDark==false){ //if it just became dark
+          updateLightsRequiredThisLoop=true;
+          brightnessLastChangedAt=millis();
+        }
+        isDark=true;
+      }else{
+        //Serial.print("bright");
+        if(isDark==true){ //if it just became dark
+          updateLightsRequiredThisLoop=true;
+          brightnessLastChangedAt=millis();
+        }
+        isDark=false;
+      }
+    }
   }else{
-    Serial.print("bright");
+    if(isDark){
+      updateLightsRequiredThisLoop=true;
+    }
+    isDark=false;
+  }
+
+  if(isDark){
+    brighnessFactor=5*16;
   }
   //Serial.println("");
-*/
 
 
-  /*
-  if(isDark && digitalRead(D0) && digitalRead(D6)){ //if it's dark, dim the lights and ignore the brightness knob
-    lights.setBrightness(5);
-    lights.show();
-    isDark=false;
-  }else if(!isDark && !digitalRead(D0) && !digitalRead(D6)){
-    lights.setBrightness(lastBrightness);
-    isDark=true;
-  }
-  */
+
 
   if(posChangedBy!=0 && millis()-lastSentColorAt>100){ //while user is turning knob, only send value every ____ to avoid flooding MQTT topic  
     itoa(currentColor, sendVal,10);
@@ -1295,14 +1358,19 @@ void loop(){
     
   }
 
-  for(int i=0;i<NUMPIXELS;i++){
-    lights.setPixelColor(i, lights.Color(stripColors[i][0]*(brighnessFactor/4096.0),stripColors[i][1]*(brighnessFactor/4096.0),stripColors[i][2]*(brighnessFactor/4096.0)));
+//if nothing changed, no need to re-set the strip. (The only real point in doing this is to prevent v3.0 hearts without the level shifter from flickering so much, cause they flicker a small percentage of the time but only during strip updates. If this line weren't there, strip updates would be constant)
+//actually, there's a chance this helps WiFi reception too
+  if(posChangedBy!=0 || !brightnessChangedThisLoop || updateLightsRequiredThisLoop){ 
+    for(int i=0;i<NUMPIXELS;i++){
+      lights.setPixelColor(i, lights.Color(stripColors[i][0]*(brighnessFactor/4096.0),stripColors[i][1]*(brighnessFactor/4096.0),stripColors[i][2]*(brighnessFactor/4096.0)));
+      lights.show();
+    }
   }
   /*Serial.println(stripColors[0][0]);
   Serial.println(stripColors[0][1]);
   Serial.println(stripColors[0][2]);
   Serial.println(brighnessFactor);delay(1);*/
-  lights.show();
+  
 }
 
 //Give the current brightness b and color c that the heart is set to, and it will return the threshold of a "dark" room.
@@ -1311,23 +1379,23 @@ double calculateBrightnessThreshold(double b, double c) {
     // The 66 optimized coefficients from your program's output
     // Note: The order must match the nested loops below
     const double params[66] = {
-        1.40661474e+03, -8.89724555e-01, -2.10193974e-02, 2.46326838e-04,
-        -6.42576675e-07, -2.83601051e-09, 2.34030601e-11, -6.76396117e-14,
-        1.00579625e-16, -7.66603184e-20, 2.37064871e-23, -3.89479094e+00,
-        -1.19406348e-01, 2.60265737e-03, -1.10591439e-05, -2.41880700e-08,
-        2.72285718e-10, -7.31926760e-13, 9.06326708e-16, -5.28297420e-19,
-        1.13347866e-22, 9.12202162e-01, 1.59873048e-03, -4.27394787e-05,
-        2.72696775e-07, -8.27112834e-10, 1.19205151e-12, -5.85548703e-16,
-        -2.64756572e-19, 2.58909964e-22, -1.87959983e-02, 8.22251686e-06,
-        2.24891931e-07, -1.03892880e-09, 2.58902993e-12, -4.01288622e-15,
-        3.32190622e-18, -1.09541462e-21, 1.51212575e-04, -3.00454234e-07,
-        -7.48563771e-10, 2.82924917e-12, -2.63329387e-15, 1.07750517e-18,
-        -2.40538516e-22, 3.75189283e-08, 2.75900790e-09, 2.96533441e-14,
-        -7.72570754e-15, 5.94040407e-18, -1.08724127e-21, -1.02094005e-08,
-        -1.18971541e-11, 1.07818546e-14, 7.04151744e-18, -4.71521571e-21,
-        8.40415379e-11, 2.37404048e-14, -3.02032433e-17, 1.28943661e-21,
-        -3.27772689e-13, -1.49909539e-17, 2.44321530e-20, 6.49770875e-16,
-        -6.80858148e-21, -5.26938205e-19
+        1.31260566e+03, 1.39699585e+01, -4.20581546e-01, 5.01252483e-03,
+        -3.08280756e-05, 1.10143121e-07, -2.41435488e-10, 3.29285435e-13,
+        -2.72378638e-16, 1.25049204e-19, -2.44413125e-23, -5.54570392e+00,
+        -3.03356962e-02, 2.59819500e-03, -2.65535455e-05, 1.13793417e-07,
+        -2.51375966e-10, 3.03049590e-13, -1.92876409e-16, 5.45759984e-20,
+        -3.18204103e-24, 8.25842200e-01, -1.52211431e-03, -1.91011028e-07,
+        4.35345433e-08, -2.55831872e-10, 6.50123755e-13, -8.19414948e-16,
+        5.05988589e-19, -1.22590347e-22, -1.55226197e-02, 2.58293808e-05,
+        -1.21797977e-08, 6.23759178e-11, -3.21706550e-13, 3.54992266e-16,
+        -1.08815972e-19, -4.38295556e-24, 1.09740655e-04, -3.13036441e-07,
+        3.95177732e-11, 8.56445926e-13, -2.24146956e-16, -4.53832488e-19,
+        1.66168603e-22, 2.72089061e-07, 2.18322148e-09, -2.28287647e-12,
+        -2.99955502e-15, 2.48815017e-18, -1.12114511e-22, -1.04106868e-08,
+        -7.27187228e-12, 1.34277984e-14, 8.79370785e-19, -2.73002363e-21,
+        7.92046912e-11, 7.88794501e-15, -2.76874625e-17, 4.97463965e-21,
+        -3.00462844e-13, 1.01706579e-17, 1.70705313e-20, 5.88290581e-16,
+        -2.05928088e-20, -4.74723407e-19
     };
 
     //Below this is horner's method. It's a way to calculate the above polynomial without impercise calculation of very large and very small numbers accumulating and causing wildly innacurate results
