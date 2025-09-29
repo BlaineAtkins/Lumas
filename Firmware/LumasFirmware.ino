@@ -39,7 +39,7 @@ int lastBrighnessFactor=500; //initialized to a value very different from what i
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.19"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.20"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -102,6 +102,9 @@ boolean isDark;
 
 long brightnessLastChangedAt=0;
 
+int brightnessThresholdOffset = 100; //as of 9/28 working experimental values are 100/0/300
+int goDimOffset = 0;
+int goBrightOffset = 300;
 
 //BELOW CODE IS FOR GOOGLE SHEETS "DATABASE" -- temporary solution that should hopefully replace EEPROM until we get a real database
 String googleSheetURL ="https://docs.google.com/spreadsheets/d/1FMWpVuE9PxkHIEMgdaKUi_d1UH7pvPvcPBorXB6OsQY/gviz/tq?tqx=out:csv&sheet=Active&range="; //append a range, eg: "a1:b4" to use this URL
@@ -928,6 +931,18 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       if(command=="WHOSTHERE"){
         client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
       }
+      if(command=="DEV"){ //to be used ONLY in development. This block should be blank in prod hearts.
+        brightnessThresholdOffset=adminPayload.substring(0,3).toInt(); 
+        goDimOffset=adminPayload.substring(3,6).toInt();
+        goBrightOffset=adminPayload.substring(6).toInt();
+        Serial.print("Changing auto-dim parameters... ");
+        Serial.print(brightnessThresholdOffset);
+        Serial.print("\t");
+        Serial.print(goDimOffset);
+        Serial.print("\t");
+        Serial.println(goBrightOffset);
+
+      }
     }
     
   }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"None")!=0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
@@ -1235,27 +1250,25 @@ void loop(){
   }
   int c=colorIndex;
   double threshold=calculateBrightnessThreshold(b,c); //calculateBrightnessThreshold
-  threshold=threshold+150; //seems like the experiment was done slightly too bright. Experimentally, subtracting from threshold makes it more reliably enter dim mode in dark rooms
+  threshold=threshold+brightnessThresholdOffset; //seems like the experiment was done slightly too bright. Experimentally, subtracting (adding?) from threshold makes it more reliably enter dim mode in dark rooms
 
   rawBrightness=analogRead(34);
-
   /*
   Serial.println(c);
   Serial.print("\t");
   Serial.print(b);
   Serial.print("\t");
-  
-
+  */
   Serial.print(rawBrightness);
   Serial.print("\t");
   Serial.print(threshold);
   Serial.println("  :)\t");
-  */
+  
   
   bool updateLightsRequiredThisLoop=false;
   if(digitalRead(23)){ //only do auto-dim if auto-dim switch is set.
     if(millis()-brightnessLastChangedAt>1000){ //photoresistor takes some time to settle, so after changing brightness wait a little bit before attempting to read again (also just nice to user not to rapidly flash)
-      if(rawBrightness<threshold){
+      if(rawBrightness<threshold-goDimOffset){
         //Serial.println("dim");
         if(isDark==false){ //if it just became dark
           updateLightsRequiredThisLoop=true;
@@ -1263,9 +1276,10 @@ void loop(){
         }
         isDark=true;
       }else{
-        if(rawBrightness>threshold+150){ //hysterisis attempt
+        //if(rawBrightness>threshold+goBrightOffset){ //hysterisis attempt
+        if(rawBrightness>1410+goBrightOffset){ //calcs at low brightness are prone to being wrong, and low brightness isn't much affected by color, so just compare to a static value that seems to be right according to data collection for brightness level 6
           //Serial.print("bright");
-          if(isDark==true){ //if it just became dark
+          if(isDark==true){ //if it just became bright
             updateLightsRequiredThisLoop=true;
             brightnessLastChangedAt=millis();
           }
@@ -1273,8 +1287,8 @@ void loop(){
         }
       }
     }
-  }else{
-    if(isDark){
+  }else{ //if we're not in auto-dim mode
+    if(isDark){ //if we were dimmed, un-dim
       updateLightsRequiredThisLoop=true;
     }
     isDark=false;
