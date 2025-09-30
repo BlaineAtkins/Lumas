@@ -39,7 +39,7 @@ int lastBrighnessFactor=500; //initialized to a value very different from what i
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.20"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.21"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[20];//="US";
@@ -48,7 +48,7 @@ int numOtherClientsInGroup;//=1;
 char otherClientsInGroup[21][20]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
 bool otherClientsOnlineStatus[21]={false};
 char groupName[20];//="PHUSSandbox";
-int modelNumber;//=2; //1 is the original from 2021. 2 is the triple indicator neopixel version developed in 2024
+int modelNumber;//=2; //1 is the original from 2021. 2 is the triple indicator neopixel version developed in 2024 <<-- OUTDATED. See OneNote documentation for new version numbers. ....And code should be updated to match
 //END CLIENT SPECIFIC VARIABLES------------
 
 unsigned long otherClientsLastPingReceived[6]={4294000000,4294000000,4294000000,4294000000,4294000000,4294000000}; //Updated whenever we receive a ping, and used to determine online status. The order follows otherClientsInGroup. --- Initialized to near max value to avoid indicator being green at boot
@@ -257,6 +257,15 @@ void loadClientSpecificVariables(){
   if (error) {
     Serial.print("JSON deserialization failed: ");
     Serial.println(error.c_str());
+    Serial.println("Usually restarting fixes this, so we will restart now...");
+    Serial.println("If you are encountering this message in a loop, it probably means that the WiFi network you're connected to doesn't have internet access. Perhaps a captive portal.");
+    for(int i=0;i<10;i++){ //flash indicator rapidly to indicate this happened
+      delay(100);
+      statusLEDs(100,0,0,0);
+      delay(100);
+      statusLEDs(0,0,0,0);
+    }
+    ESP.restart();
     return;
   }
 
@@ -271,7 +280,7 @@ void loadClientSpecificVariables(){
 
   //STEP 2: Using this client's group name, look up others!
   int countNumOtherClientsInGroup=0;
-  char* otherClients[6];
+  char otherClients[21][20]; //used to be char* otherClients[6]
   if(strcmp(group,"None")!=0){
     String groupURL = "http://lumas.live:4000/api/groups/";
   
@@ -296,8 +305,11 @@ void loadClientSpecificVariables(){
     countNumOtherClientsInGroup=0;
     for (const char* heartID : heartIDs) {
       if(strcmp(WiFi.macAddress().c_str(),heartID)!=0){ //As long as this isn't our own MAC
-        otherClients[countNumOtherClientsInGroup] = (char*)heartID;  
-        Serial.println(heartID);
+        //otherClients[countNumOtherClientsInGroup] = (char*)heartID;  //used to be =(char*)heartID
+        strcpy(otherClients[countNumOtherClientsInGroup],heartID); //added
+        Serial.print(heartID);
+        Serial.print(" --> ");
+        Serial.println(otherClients[countNumOtherClientsInGroup]);
         countNumOtherClientsInGroup++;
       }
     }
@@ -305,12 +317,17 @@ void loadClientSpecificVariables(){
   }
 
   //STEP 3: load variables in to local memory
-
+  Serial.print("Putting value ");
+  Serial.print(heartName);
+  Serial.print(" ----> ");
   strcpy(clientName,heartName);
+  Serial.println(clientName);
   //COPY THIS NAME IN TO EEPROM IF IT DIFFERS, cause it is used in wifi setup pre-network connection
   EEPROM.begin(173);
   char ch_clientName[20];
   EEPROM.get(3,ch_clientName);
+  Serial.print("Read in EEPROM value: ");
+  Serial.println(ch_clientName);
   EEPROM.end();
   if(strcmp(ch_clientName,clientName)!=0){ //if different, put new name in to EEPROM
     Serial.println("Name updated, updating local EEPROM value");
@@ -318,14 +335,22 @@ void loadClientSpecificVariables(){
     EEPROM.put(3,clientName);
     EEPROM.end();
   }
+  Serial.print("Putting value ");
+  Serial.print(group);
+  Serial.print(" ----> ");
   strcpy(groupName,group);
+  Serial.println(groupName);
   //modelNumber=atoi((httpResult.substring(nthIndex(httpResult,'\"',5)+1,nthIndex(httpResult,'\"',6))).c_str());
-  modelNumber=2; //currently not in AWS database
+  modelNumber=2; //currently not in AWS database <--- now it is lol. COde needs updated.
   
   if(strcmp(group,"None")!=0){
     numOtherClientsInGroup=countNumOtherClientsInGroup;
     for(int i=0;i<countNumOtherClientsInGroup;i++){
+      Serial.print("Copying ");
+      Serial.print(otherClients[i]);
+      Serial.print(" in to array as ");
       strcpy(otherClientsInGroup[i],otherClients[i]);
+      Serial.println(otherClientsInGroup[i]);
     }
   }
 
@@ -818,7 +843,11 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
   Serial.println();
   */
 
-  payload[length] = '\0'; // Add a NULL to the end of the char* to make it a string.
+  //payload[length] = '\0'; // Add a NULL to the end of the char* to make it a string. //future Blaine here -- is this not overwriting the last character?? Or the first one of the next variable in memory?? We're gonna try to redo this below
+
+  char payloadCStr[length+1]; 
+  memcpy(payloadCStr, payload, length);
+  payloadCStr[length] = '\0'; // Add a null terminator so from here forward we can treat the payload like a cstring and use strcpy etc
 
   //Serial.println("Received msg");
   
@@ -826,8 +855,8 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
     receivedColorMode=true;
     Serial.println("multicolor topic");
     
-    char* payloadChar = (char *)payload; //......what kind of line is this?? ...but I'm scared to delete it
-    if(strcmp(payloadChar,"true")==0){
+    //char* payloadChar = (char *)payload; //......what kind of line is this?? ...but I'm scared to delete it   //newer and smarter blaine has replaced this with the new payloadStr above
+    if(strcmp(payloadCStr,"true")==0){
       multiColorMode=true;
     }else{
       multiColorMode=false;
@@ -835,10 +864,10 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
     Serial.println(multiColorMode);
   }else if(strcmp(topic,onlineStatusTopic)==0){
 
-    Serial.print("Received online status: ");
-    Serial.println(String((char*)payload));
+    //Serial.print("Received online status: ");
+    //Serial.println(String((char*)payload));
     
-    String strPayload = String((char*)payload);
+    String strPayload = String(payloadCStr); //used to be String((char*)payload)
     int firstCommaIndex=strPayload.indexOf(',');
     int secondCommaIndex=strPayload.indexOf(',',firstCommaIndex+1);
     String thisHeartOnline=strPayload.substring(0,firstCommaIndex);
@@ -847,11 +876,14 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
     //TODO: Blaine you are here
     //now check if thisHeartMac is present in otherClientsInGroup, and if so (cause it should be), set the corresponding index of otherClientsOnlineStatus
     for(int i=0;i<numOtherClientsInGroup;i++){
+      //Serial.print("Checking if received message matches other client: ");
+      //Serial.println(otherClientsInGroup[i]);
       if(strcmp(thisHeartMAC.c_str(),otherClientsInGroup[i])==0){
-        Serial.print("match found, heart ");
-        Serial.println(i);
+        //Serial.print("match found, heart ");
+        //Serial.println(i);
         if(strcmp(thisHeartOnline.c_str(),"Online")==0){
           otherClientsOnlineStatus[i]=true;
+          //Serial.println("setting another heart to online!");
         }else if(strcmp(thisHeartOnline.c_str(),"Offline")==0){
           otherClientsOnlineStatus[i]=false;
         }
@@ -861,7 +893,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
     //otherClientsOnlineStatus
 
   }else if(strcmp(topic,adminTopic)==0){ //an admin command
-    String strPayload = String((char*)payload);
+    String strPayload = String(payloadCStr);
     int firstCommaIndex=strPayload.indexOf(',');
     int secondCommaIndex=strPayload.indexOf(',',firstCommaIndex+1);
     String target=strPayload.substring(0,firstCommaIndex);
@@ -948,7 +980,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
   }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"None")!=0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
     
 
-    String strPayload = String((char*)payload);
+    String strPayload = String(payloadCStr);
     int firstCommaIndex=strPayload.indexOf(',');
     int secondCommaIndex=strPayload.indexOf(',',firstCommaIndex+1);
     String receivedNumber = strPayload.substring(0,firstCommaIndex);
@@ -979,7 +1011,9 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
         strcat(sendVal,WiFi.macAddress().c_str());
         strcat(sendVal,",");
         strcat(sendVal,clientName);
-        client.publish(groupTopic,sendVal);
+        client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
+        client.publish(groupTopic,sendVal); //send this second. Hopefully that gives the other heart a chance to update status first so it doesn't re-request online status with "-2" since it just came online and didn't get the online message yet
+      }else if(rcvNum==-2){ //-2 means the other heart is just checking online status, no need for color update
         client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
       }else{ //only update color from remote heart if it wasn't it's first ping to say it's online
     
@@ -1050,7 +1084,28 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
         }
       }
 
-      
+      //if we received a color but we think nobody else is online, we're probably wrong (unless it came from the webapp). So let's ask everyone else to send their status to check
+      //necessary because every once in awhile the initial "who's online" handshake doesn't work properly, so this is a failsafe so we're not stuck thinking everyone's offline
+      bool knowOfOthersOnline=false;
+      for(int i=0;i<(sizeof(otherClientsOnlineStatus)/sizeof(otherClientsOnlineStatus[0]));i++){ //check if we already know that others are online
+        if(otherClientsOnlineStatus[i]){
+          knowOfOthersOnline=true;
+          //Serial.println("detected another client online");
+          break; //no need to check every single one
+        }
+      }
+      if(!knowOfOthersOnline && !(strcmp(ch_fromClientName,"WEB_APP")==0) && rcvNum!=-1){ //if we didn't know, re-run check algorithm
+        /*Serial.println();
+        Serial.println();
+        Serial.println();
+        Serial.println();
+        Serial.println("CHECKING STATUS BECAUSE RECEIVED MSG:");
+        Serial.println(strPayload);*/
+
+        client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str()); //tell others we're here in case they don't know
+        client.publish(groupTopic,("-2,"+WiFi.macAddress()+","+clientName).c_str()); //ask who else is there (this will trigger the callback that sents the appropriate otherClientsOnlineStatus value to true)
+      }
+       
     }
   }
 }
@@ -1150,11 +1205,11 @@ void pingAndStatus(){
 
 void confirmColorMode(){ //every day, re-publish the current color mode to the MQTT broker since it only retains the last message for 3 days
   if(millis()-confirmColorModeTimer>60000*60*24 && client.connected() && receivedColorMode){ //last condition is to only publish the mode if we're already confident in what it is
-    char* tempmultiColorMode;
+    char tempmultiColorMode[5];
     if(multiColorMode){
-      tempmultiColorMode="true";
+      strcpy(tempmultiColorMode, "true");
     }else{
-      tempmultiColorMode="false";
+      strcpy(tempmultiColorMode, "false");
     }
     client.publish(multiColorTopic,tempmultiColorMode,true);
     confirmColorModeTimer=millis();
@@ -1258,12 +1313,12 @@ void loop(){
   Serial.print("\t");
   Serial.print(b);
   Serial.print("\t");
-  */
+  
   Serial.print(rawBrightness);
   Serial.print("\t");
   Serial.print(threshold);
   Serial.println("  :)\t");
-  
+  */
   
   bool updateLightsRequiredThisLoop=false;
   if(digitalRead(23)){ //only do auto-dim if auto-dim switch is set.
