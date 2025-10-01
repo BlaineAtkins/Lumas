@@ -42,23 +42,24 @@ bool firstConnectAttempt=true; //set to false after first connection attempt so 
 const String FirmwareVer={"0.21"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
-char clientName[20];//="US";
+char clientName[25];//="US";
 
 int numOtherClientsInGroup;//=1;
-char otherClientsInGroup[21][20]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
+char otherClientsInGroup[21][25]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
 bool otherClientsOnlineStatus[21]={false};
-char groupName[20];//="PHUSSandbox";
+char groupName[25];//="PHUSSandbox";
 int modelNumber;//=2; //1 is the original from 2021. 2 is the triple indicator neopixel version developed in 2024 <<-- OUTDATED. See OneNote documentation for new version numbers. ....And code should be updated to match
 //END CLIENT SPECIFIC VARIABLES------------
 
-unsigned long otherClientsLastPingReceived[6]={4294000000,4294000000,4294000000,4294000000,4294000000,4294000000}; //Updated whenever we receive a ping, and used to determine online status. The order follows otherClientsInGroup. --- Initialized to near max value to avoid indicator being green at boot
+//unsigned long otherClientsLastPingReceived[6]={4294000000,4294000000,4294000000,4294000000,4294000000,4294000000}; //Updated whenever we receive a ping, and used to determine online status. The order follows otherClientsInGroup. --- Initialized to near max value to avoid indicator being green at boot
 //NOTE!! the above variable replaces lastPingReceived
 
-char groupTopic[70]; //70 should be large enough
-char multiColorTopic[84];
-char onlineStatusTopic[84];
-char adminTopic[70];
-char consoleTopic[70]; //this topic is for hearts to publish to in response to admin commands, etc
+///These are oversized. I tried to shrink them with ~5 characters of margin, and it cuased a runtime error "Stack smashing protect failure!". No idea why. I put made them large again and the error went away 😅.
+char groupTopic[70]; //LumasHearts/groups/[up to 24 char name]/color
+char multiColorTopic[84]; //LumasHearts/groups/[up to 24 char name]/multicolorMode
+char onlineStatusTopic[84]; //LumasHearts/groups/[up to 24 char name]/onlineStatus
+char adminTopic[70]; //LumasHearts/admin
+char consoleTopic[70]; //LumasHearts/console
 
 bool receivedColorMode=false; //This variable is set true whenever we receive the multicolor mode, and false whenever we disconnect. This is to prevent this client from re-affirming the mode (publishing it to the broker to keep it active) incorrectly before we've actually received the current mode. It will probably be obsolete once we store this value in the database
 
@@ -92,7 +93,7 @@ unsigned long confirmColorModeTimer=60000*60*24-60000*15; //within first 15 minu
 unsigned long lastSentColorAt=0;
 bool currentlyChangingColor=false;
 
-char sendVal[50]; //array to store value to send (must be long enough to hold [color number; this client name; this MAC address --17 chars])           //OLD COMMENT: //array to store value to send to other heart MUST BE [5] FOR 4 CHAR VALUE!! Due to because of termination char?
+char sendVal[60]; //array to store value to send (must be long enough to hold [color number; this client name; this MAC address --17 chars]) //now 5+25+18+3 (ish)           //OLD COMMENT: //array to store value to send to other heart MUST BE [5] FOR 4 CHAR VALUE!! Due to because of termination char?
 
 unsigned long lastPingSent; //time the last ping was sent
 unsigned long lastPingReceived;
@@ -107,7 +108,8 @@ int goDimOffset = 0;
 int goBrightOffset = 300;
 
 //BELOW CODE IS FOR GOOGLE SHEETS "DATABASE" -- temporary solution that should hopefully replace EEPROM until we get a real database
-String googleSheetURL ="https://docs.google.com/spreadsheets/d/1FMWpVuE9PxkHIEMgdaKUi_d1UH7pvPvcPBorXB6OsQY/gviz/tq?tqx=out:csv&sheet=Active&range="; //append a range, eg: "a1:b4" to use this URL
+//String googleSheetURL ="https://docs.google.com/spreadsheets/d/1FMWpVuE9PxkHIEMgdaKUi_d1UH7pvPvcPBorXB6OsQY/gviz/tq?tqx=out:csv&sheet=Active&range="; //append a range, eg: "a1:b4" to use this URL
+//goodbye google sheet
 
 //---------------------
 
@@ -280,7 +282,7 @@ void loadClientSpecificVariables(){
 
   //STEP 2: Using this client's group name, look up others!
   int countNumOtherClientsInGroup=0;
-  char otherClients[21][20]; //used to be char* otherClients[6]
+  char otherClients[21][25]; //used to be char* otherClients[6]
   if(strcmp(group,"None")!=0){
     String groupURL = "http://lumas.live:4000/api/groups/";
   
@@ -324,7 +326,7 @@ void loadClientSpecificVariables(){
   Serial.println(clientName);
   //COPY THIS NAME IN TO EEPROM IF IT DIFFERS, cause it is used in wifi setup pre-network connection
   EEPROM.begin(173);
-  char ch_clientName[20];
+  char ch_clientName[25];
   EEPROM.get(3,ch_clientName);
   Serial.print("Read in EEPROM value: ");
   Serial.println(ch_clientName);
@@ -472,9 +474,9 @@ void loadClientSpecificVariables(){
 }
 
 //for reasons I don't understand, this doesn't need a return value. Whatever array gets passed in gets sorted in place
-void BubbleSort (char arry[][20], int m){ //m is number of elements
-    char valA[20];
-    char valB[20];
+void BubbleSort (char arry[][25], int m){ //m is number of elements
+    char valA[25];
+    char valB[25];
     int i, j;
     for (i = 0; i < m; ++i){
         for (j = 0; j < m-i-1; ++j){
@@ -570,6 +572,7 @@ void firmwareUpdate(){
     }
 }
 
+/*
 void getGoogleSheet(){
 
   int numrow=0;
@@ -665,6 +668,7 @@ void getGoogleSheet(){
     }
     
 }
+*/
 
 int nthIndex(String str,char ch, int N){
     int occur = 0;
@@ -779,7 +783,7 @@ void setup() {
 
   //now open EEPROM again for actual usage
   EEPROM.begin(173);
-  char ch_clientName[20];
+  char ch_clientName[25];
   EEPROM.get(3,ch_clientName);
   EEPROM.end();
   strcpy(clientName,ch_clientName);
@@ -1022,7 +1026,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
 
         if(multiColorMode){
           //create an array of client MAC addresses including our own to be sorted 
-          char clientsIncludingMe[numOtherClientsInGroup+1][20];
+          char clientsIncludingMe[numOtherClientsInGroup+1][25];
           memcpy(clientsIncludingMe, otherClientsInGroup, numOtherClientsInGroup*20);
           strcpy(clientsIncludingMe[numOtherClientsInGroup],WiFi.macAddress().c_str());
           BubbleSort(clientsIncludingMe,numOtherClientsInGroup+1); //sort by MAC first in order to ensure consistant placement of each user across hearts
@@ -1078,11 +1082,14 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       //statusLEDs(0,100,0,0); //this should be handled in pingAndStatus() now
 
       //Do parsing to store values for who's online
+      //we no longer check online status with heartbeats
+      /*
       for(int i=0;i<numOtherClientsInGroup;i++){
         if(strcmp(fromClientMac.c_str(),otherClientsInGroup[i])==0){ //find index to update
           otherClientsLastPingReceived[i]=millis();
         }
       }
+      */
 
       //if we received a color but we think nobody else is online, we're probably wrong (unless it came from the webapp). So let's ask everyone else to send their status to check
       //necessary because every once in awhile the initial "who's online" handshake doesn't work properly, so this is a failsafe so we're not stuck thinking everyone's offline
@@ -1383,7 +1390,7 @@ void loop(){
   if(multiColorMode){
 
     //create an array of client MAC addresses including our own to be sorted 
-    char clientsIncludingMe[numOtherClientsInGroup+1][20];
+    char clientsIncludingMe[numOtherClientsInGroup+1][25];
     memcpy(clientsIncludingMe, otherClientsInGroup, numOtherClientsInGroup*20);
     strcpy(clientsIncludingMe[numOtherClientsInGroup],WiFi.macAddress().c_str());
     BubbleSort(clientsIncludingMe,numOtherClientsInGroup+1); //sort by MAC first in order to ensure consistant placement of each user across hearts
