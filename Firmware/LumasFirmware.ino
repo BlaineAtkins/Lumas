@@ -25,6 +25,10 @@ IRAM_ATTR void checkEncoderPosition() //ISR called on any change of one of the i
   encoder->tick(); // just call tick() to check the state.
 }
 
+WiFiManager wifiManager;
+
+String macAddress;
+
 //for use in changing colors/brightness
 int newColorRed;
 int newColorGreen;
@@ -35,11 +39,12 @@ int colorIndex=0;
 
 int lastBrighnessFactor=500; //initialized to a value very different from what it will immediately be set to
 
-
+bool configPortalActive=false;
+unsigned long configPortalStartedAt=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.21"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.22"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[25];//="US";
@@ -66,6 +71,8 @@ bool receivedColorMode=false; //This variable is set true whenever we receive th
 #define NUMPIXELS 12
 Adafruit_NeoPixel lights(NUMPIXELS, 27, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel indicator(1, 4, NEO_GRB + NEO_KHZ800);
+int indicatorColor[3]={0,0,0};
+bool evenSecond=false;
 
 const char* mqtt_server = "lumas.live";
 WiFiClient espClient;
@@ -169,14 +176,13 @@ int getColor(int color,char component){
   }
 }
 
-
+//deprecated as we're moving to an on-demand, non-blocking setup. New function below this one.
 void setup_wifi() {
   WiFiManager manager;
   manager.setDebugOutput(false);
   //manager.resetSettings();
   
   Serial.println("Attempting to connect to saved network");
-  //WiFi.begin();
   WiFi.begin();
   unsigned long startTime=millis();
   while(WiFi.status()!=WL_CONNECTED && millis()-startTime<14000){
@@ -222,6 +228,28 @@ void setup_wifi() {
   Serial.print("Succesfully connected to ");
   Serial.println(WiFi.SSID());
 }
+
+
+void startConfigPortal(){
+
+  char bufNetName[41];
+  strcpy(bufNetName,clientName);
+  strcat(bufNetName,"'s Lumas Setup");
+  String networkName=String(bufNetName);
+  Serial.print("Starting config AP with SSID: ");
+  Serial.println(networkName);
+
+  // Switch wifiManager config portal IP from default 192.168.4.1 to 8.8.8.8. This ensures auto-load on some older android devices which have 8.8.8.8 hard-coded in the OS.
+  wifiManager.setAPStaticIPConfig(IPAddress(8,8,8,8), IPAddress(8,8,8,8), IPAddress(255,255,255,0));
+  wifiManager.setTitle("Lumas Config");
+  wifiManager.setMac(macAddress); //Ok. So. setMac is a custom function I added to the library. Declared in WiFiManager.h, used in WiFiManager.cpp, and affecting wm_strings_en.h (ctrl+f for "blaineModified")
+
+  wifiManager.startConfigPortal(networkName.c_str(),"");
+  configPortalActive=true;
+  configPortalStartedAt=millis();
+}
+
+
 
 String httpGet(String url){
   String httpResult;
@@ -790,10 +818,63 @@ void setup() {
   //Serial.print("read in ");
   //Serial.println(clientName);
   
-  setup_wifi();
-  
+  //setup_wifi(); //switching to on-demand config
   // if you get here you have connected to the WiFi
-  Serial.println("Connected to WiFi");
+  //Serial.println("Connected to WiFi");
+
+  wifiManager.setConfigPortalBlocking(false);
+  Serial.println("Will now try to connect to saved wifi network...");
+  WiFi.begin(); //attempt to connect to saved network (blank parameter uses EEPROM values)
+  macAddress=WiFi.macAddress(); //for some reason this seems to be the only time in wifi setup & retries that we can reliably get the MAC -_-
+  unsigned long beginTime=millis();
+  while(WiFi.status()!=WL_CONNECTED){
+    yield(); //prevent WDT reset
+    if(millis()-beginTime>6000){ //if not connected after 6 seconds, we're probably not going to
+      break;
+    }
+  }
+  if(WiFi.status()==WL_CONNECTED){ 
+    Serial.println("Succesfully connected to saved network, config portal off");
+  }else{
+    Serial.println("failed to connect, starting config portal");
+    startConfigPortal();
+  }
+
+  unsigned long initialConfigTimeoutTimer=millis();
+  while(WiFi.status()!=WL_CONNECTED){ //stay here while wifi config portal is running for the first time
+    wifiManager.process(); //to let wifimanager config portal run in the background
+    if(WiFi.softAPgetStationNum()>0){ //if someone's connected to the AP, don't reset
+      initialConfigTimeoutTimer=millis();
+    }
+    if(millis()-initialConfigTimeoutTimer>60000*5){
+      Serial.println("temporarily shutting off config AP to try connecting to saved WiFi again");
+      //WiFi.softAPdisconnect(true);
+      WiFi.disconnect(true);
+      WiFi.begin(); //this tries again to connect to saved network in case it's available and the connection just failed the first time (or there was a temporary outage)
+      beginTime=millis();
+      while(WiFi.status()!=WL_CONNECTED && millis()-beginTime<6000){
+        yield();
+      }
+      if(WiFi.status()==WL_CONNECTED){
+        Serial.println("reconnect attempt succesful!");
+        break;
+      }else{
+        Serial.println("reconnect attempt failed");
+      }
+      initialConfigTimeoutTimer=millis(); //reset so we don't try again until after another wait period
+      delay(100);
+      Serial.println("restarting config portal");
+      WiFi.disconnect(true); //this seems to be necessary for the next instance of the config portal to work
+      //WiFi.begin(); //....but this is needed to get the MAC for the config portal -_-. If this causes it to crash too, let's just save the MAC in a variable the first time.
+      startConfigPortal(); //restart the config portal
+    }
+  }
+  Serial.println();
+
+  Serial.println("Network connection success!");
+  Serial.println("shutting off AP");
+  WiFi.softAPdisconnect(true);
+  configPortalActive=false;
 
   loadClientSpecificVariables();
 
@@ -830,11 +911,38 @@ void setup() {
 
 
 void statusLEDs(int red, int green, int blue, int indicatorNum){
-  if(indicatorNum<3){ //ignore out of bounds 
-    indicator.setPixelColor(indicatorNum,indicator.Color(red,green,blue));
-    indicator.show();
+  //set global variables so that if we have to flash it, we know what color it's supposed to be
+  indicatorColor[0]=red;
+  indicatorColor[1]=green;
+  indicatorColor[2]=blue;
+  if(!configPortalActive){
+    if(indicatorNum<3){ //ignore out of bounds 
+      indicator.setPixelColor(indicatorNum,indicator.Color(red,green,blue));
+      indicator.show();
+    }
+  }else{ //if the config portal is active, alternate between showing the normal status and that the config portal is launched.
+    int startingWith=evenSecond;
+    if(((millis()/1000)/2)%2==0){ //swap every 2 seconds
+      evenSecond=true;
+    }else{
+      evenSecond=false;
+    }
+    if(startingWith!=evenSecond){
+      //Serial.println("swapping!");
+      if(evenSecond){
+        //Serial.println("general status");
+        indicator.setPixelColor(0,indicator.Color(indicatorColor[0],indicatorColor[1],indicatorColor[2]));
+        indicator.show();
+      }else{
+        //Serial.println("WiFi portal status");
+        indicator.setPixelColor(0,indicator.Color(150,60,0));
+        indicator.show();
+      }
+    }
+
   }
 }
+
 
 void Received_Message(char* topic, byte* payload, unsigned int length) {
   /*
@@ -1229,22 +1337,43 @@ bool shortPressMsgSent=false;
 int shortPressTime=50;
 
 void loop(){
-
   if(!digitalRead(14)){
     if(!btnCurrentlyPressed){
       btnCurrentlyPressed=true;
       btnPressedAt=millis();
     }else{
       if(millis()-btnPressedAt>shortPressTime && !shortPressMsgSent){
-        Serial.println("SHORT BTN PRESS");
+        Serial.println("SHORT BTN PRESS (note, this fires on button press, not un-press. So long press will always trigger this first).");
         client.publish("LumasHearts/hearts/verify",("shortPress, " + WiFi.macAddress()).c_str());
         shortPressMsgSent=true;
+      }
+      if(millis()-btnPressedAt>2000 && !configPortalActive){
+        Serial.println("Starting config portal");
+        configPortalActive=true;
+        configPortalStartedAt=millis();
+        statusLEDs(150,50,0,0); //set it to orange so it immediately shows to tell the user they've done it correctly. Once startConfigPortal() finishes, pingAndStatus() will take over again
+        startConfigPortal();
       }
     }
   }else{
     btnCurrentlyPressed=false;
     shortPressMsgSent=false;
   }
+
+  wifiManager.process(); //let config portal run in the background
+
+  if(configPortalActive && WiFi.softAPgetStationNum()>0){ //reset timeout of AP if client is connected to portal
+    configPortalStartedAt=millis();
+  }
+  if(configPortalActive && millis()-configPortalStartedAt>3*60000){
+    Serial.println("Config portal inactive, shutting off AP");
+    WiFi.softAPdisconnect(true);
+    configPortalActive=false;
+  }
+
+
+  //WIFIMANAGER ON-DEMAND HANDLING
+  
   
   encoder->tick(); // just call tick() to check the state.
 
@@ -1291,9 +1420,13 @@ void loop(){
   int brighnessFactor=lastBrighnessFactor;
   int tempBrightnessReading=4096-analogRead(35);
   int antiJitterValue=80;
-  if(tempBrightnessReading>lastBrighnessFactor+antiJitterValue || tempBrightnessReading<lastBrighnessFactor-antiJitterValue){
+  int minBrightnessFactor=80; // 80/4096 = 5/255
+  if(tempBrightnessReading>lastBrighnessFactor+antiJitterValue || tempBrightnessReading<lastBrighnessFactor-antiJitterValue || (lastBrighnessFactor!=minBrightnessFactor && tempBrightnessReading<2)){
     brighnessFactor=tempBrightnessReading;
-    lastBrighnessFactor=tempBrightnessReading;
+    if(tempBrightnessReading<2){ //if knob is at minimum, set to "minimum brightness" instead of turning completely off
+      brighnessFactor=minBrightnessFactor; 
+    }
+    lastBrighnessFactor=brighnessFactor;
     brightnessChangedThisLoop=true;
   }
    
