@@ -44,7 +44,9 @@ unsigned long configPortalStartedAt=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
 
-const String FirmwareVer={"0.22"}; //used to compare to GitHub firmware version to know whether to update
+bool waitingToSendConflictResolution=false;
+
+const String FirmwareVer={"0.23"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[25];//="US";
@@ -65,6 +67,7 @@ char multiColorTopic[84]; //LumasHearts/groups/[up to 24 char name]/multicolorMo
 char onlineStatusTopic[84]; //LumasHearts/groups/[up to 24 char name]/onlineStatus
 char adminTopic[70]; //LumasHearts/admin
 char consoleTopic[70]; //LumasHearts/console
+char dbUpdateTopic[70];
 
 bool receivedColorMode=false; //This variable is set true whenever we receive the multicolor mode, and false whenever we disconnect. This is to prevent this client from re-affirming the mode (publishing it to the broker to keep it active) incorrectly before we've actually received the current mode. It will probably be obsolete once we store this value in the database
 
@@ -97,6 +100,7 @@ bool multiColorMode=false;
 unsigned long confirmColorModeTimer=60000*60*24-60000*15; //within first 15 minutes of being on, refresh this value (give it 15 mins to let user connect to wifi, hoping to avoid publishing the value before we know it)
 //....I just fixed a bug where it did exactly what the line above was trying to avoid. This time I fixed it with a variable that checks if we've received it already. So I think the above is unnecessary
 
+unsigned long lastReceivedColorAt=0;
 unsigned long lastSentColorAt=0;
 bool currentlyChangingColor=false;
 
@@ -105,6 +109,7 @@ char sendVal[60]; //array to store value to send (must be long enough to hold [c
 unsigned long lastPingSent; //time the last ping was sent
 unsigned long lastPingReceived;
 int timeout=30000; //time in milliseconds between pings
+
 
 boolean isDark;
 
@@ -721,6 +726,9 @@ void updateTopicVariables(){
   Serial.println(groupName);
   strcpy(multiColorTopic,""); //re-initalize this to empty!! Otherwise it overflows when updated
   strcat(multiColorTopic,groupTopic);
+  strcpy(dbUpdateTopic,"");
+  strcat(dbUpdateTopic,groupTopic);
+  strcat(dbUpdateTopic,"/dbUpdate");
   strcat(groupTopic,"/color");
   strcat(multiColorTopic,"/multicolorMode");
   strcpy(adminTopic,"LumasHearts/admin");
@@ -837,6 +845,7 @@ void setup() {
     Serial.println("Succesfully connected to saved network, config portal off");
   }else{
     Serial.println("failed to connect, starting config portal");
+    statusLEDs(150,50,0,0);
     startConfigPortal();
   }
 
@@ -974,7 +983,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       multiColorMode=false;
     }
     Serial.println(multiColorMode);
-  }else if(strcmp(topic,onlineStatusTopic)==0){
+  }else if(strcmp(topic,onlineStatusTopic)==0 && strcmp(groupTopic,"None")!=0){
 
     //Serial.print("Received online status: ");
     //Serial.println(String((char*)payload));
@@ -1004,6 +1013,26 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
 
     //otherClientsOnlineStatus
 
+  }else if(strcmp(topic,dbUpdateTopic)==0){
+    if(strcmp(payloadCStr,"DATABASE_UPDATE")==0){ //this is the same as the admin command, but the webapp doesn't have permission to send to /admin, so we can receive it here too. This also targets just this group.
+      Serial.println("Will update all local variables with the values from the AWS DB...");
+      loadClientSpecificVariables();
+      //unsubscribe from old topics in case they were updated
+      Serial.print("Unsubscribing from group ");
+      Serial.println(groupTopic);
+      client.unsubscribe(groupTopic);
+      client.unsubscribe(multiColorTopic);
+      client.unsubscribe(onlineStatusTopic);
+      client.unsubscribe(dbUpdateTopic);
+      updateTopicVariables();
+      //now subscribe to new ones
+      client.subscribe(groupTopic);
+      client.subscribe(multiColorTopic);
+      client.subscribe(onlineStatusTopic);
+      client.subscribe(dbUpdateTopic);
+      Serial.print("Now subscribed to group ");
+      Serial.println(groupTopic);
+    }
   }else if(strcmp(topic,adminTopic)==0){ //an admin command
     String strPayload = String(payloadCStr);
     int firstCommaIndex=strPayload.indexOf(',');
@@ -1058,17 +1087,21 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
         }
       }
       if(command=="DATABASE_UPDATE"){
-        Serial.println("Will update all local variables with the values from the google sheet...");
+        Serial.println("Will update all local variables with the values from the AWS DB...");
         loadClientSpecificVariables();
         //unsubscribe from old topics in case they were updated
         Serial.print("Unsubscribing from group ");
         Serial.println(groupTopic);
         client.unsubscribe(groupTopic);
         client.unsubscribe(multiColorTopic);
+        client.unsubscribe(onlineStatusTopic);
+        client.unsubscribe(dbUpdateTopic);
         updateTopicVariables();
         //now subscribe to new ones
         client.subscribe(groupTopic);
         client.subscribe(multiColorTopic);
+        client.subscribe(onlineStatusTopic);
+        client.subscribe(dbUpdateTopic);
         Serial.print("Now subscribed to group ");
         Serial.println(groupTopic);
       }
@@ -1132,6 +1165,8 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
         int currentColorRemote; //the color of the other heart
         currentColorRemote = rcvNum; 
 
+        lastReceivedColorAt=millis();
+
         if(multiColorMode){
           //create an array of client MAC addresses including our own to be sorted 
           char clientsIncludingMe[numOtherClientsInGroup+1][25];
@@ -1173,6 +1208,26 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
 
         }else{
           //TODO eventually: before this loop, define RGB values of the previous color and the future color. Then surround the loop with another loop that takes less than 500ms to fade from the first to the second color
+          
+          if(millis()-lastSentColorAt<1000 && currentColor!=currentColorRemote){ //if we just sent a value, the received value might have crossed mid-air and we should handle the conflict before continuing.
+            bool ignoring=false;
+            //Serial.print("Conflict between ");
+            //Serial.print(currentColor);
+            //Serial.print(" & ");
+            //Serial.print(currentColorRemote);
+            if(currentColor>currentColorRemote){ //Use higher value of the two.
+              currentColorRemote=currentColor;
+              ignoring=true;
+            }
+            //Serial.print("\t Resolution: ");
+            //Serial.print(currentColorRemote);
+            if(!ignoring){
+              //Serial.print("\tUsing my color, I will re-send");
+              waitingToSendConflictResolution=true;
+            }
+            //Serial.println();
+          }
+
           for(int i=0;i<NUMPIXELS;i++){
             //lights.setPixelColor(i, lights.Color(getColor(currentColorRemote,'r'),getColor(currentColorRemote,'g'),getColor(currentColorRemote,'b')));
             stripColors[i][0]=getColor(currentColorRemote,'r');
@@ -1182,6 +1237,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           //Serial.println(currentColorRemote);
           currentColor=currentColorRemote;
         }
+
         lights.show();
         
       }
@@ -1244,6 +1300,7 @@ void reconnect() {
       client.subscribe(adminTopic);
       client.subscribe(multiColorTopic);
       client.subscribe(onlineStatusTopic);
+      client.subscribe(dbUpdateTopic);
       client.subscribe(groupTopic); //subscribe first so that when we send -1 below, we can receive the response right away
       client.loop(); //this may be necessary to ensure we can actually receive messages before we publish -1 asking for a response
       itoa(-1, sendVal,10);
@@ -1382,8 +1439,10 @@ void loop(){
   }
   client.loop();
 
+  resolveColorConflict();
   confirmColorMode();
   pingAndStatus();
+  
 
   int posChangedBy=0;
   
@@ -1396,11 +1455,11 @@ void loop(){
   
   if (pos != newPos) {
     posChangedBy=newPos-pos;
-/*    Serial.print("pos:");
-    Serial.print(newPos);
-    Serial.print(" dir:");
-    Serial.println((int)(encoder->getDirection()));
-*/    pos = newPos;
+  /*    Serial.print("pos:");
+      Serial.print(newPos);
+      Serial.print(" dir:");
+      Serial.println((int)(encoder->getDirection()));
+  */    pos = newPos;
     
     colorIndex=colorIndex+(11*posChangedBy);
     if(colorIndex>=1024){
@@ -1569,8 +1628,8 @@ void loop(){
     
   }
 
-//if nothing changed, no need to re-set the strip. (The only real point in doing this is to prevent v3.0 hearts without the level shifter from flickering so much, cause they flicker a small percentage of the time but only during strip updates. If this line weren't there, strip updates would be constant)
-//actually, there's a chance this helps WiFi reception too
+  //if nothing changed, no need to re-set the strip. (The only real point in doing this is to prevent v3.0 hearts without the level shifter from flickering so much, cause they flicker a small percentage of the time but only during strip updates. If this line weren't there, strip updates would be constant)
+  //actually, there's a chance this helps WiFi reception too
   if(posChangedBy!=0 || !brightnessChangedThisLoop || updateLightsRequiredThisLoop){ 
     for(int i=0;i<NUMPIXELS;i++){
       lights.setPixelColor(i, lights.Color(stripColors[i][0]*(brighnessFactor/4096.0),stripColors[i][1]*(brighnessFactor/4096.0),stripColors[i][2]*(brighnessFactor/4096.0)));
@@ -1581,6 +1640,25 @@ void loop(){
   Serial.println(stripColors[0][1]);
   Serial.println(stripColors[0][2]);
   Serial.println(brighnessFactor);delay(1);*/
+  
+}
+
+void resolveColorConflict(){ //if two users are changing the color simultaniously, their MQTT messages cross in the air and the hearts wind up different colors. This resolves that.
+  //Plan: Every time we send a message, start a timer. If we receive a different color within 1 second... If received value is lower, ignore it. If higher, change to that color. If no more values received within 2 seconds, send that color back to group to let others know this was the resolved color.
+
+  if(millis()-lastSentColorAt>2000 && millis()-lastReceivedColorAt>2000 && waitingToSendConflictResolution){
+
+    itoa(currentColor, sendVal,10);
+    strcat(sendVal,",");
+    strcat(sendVal,WiFi.macAddress().c_str());
+    strcat(sendVal,",");
+    strcat(sendVal,clientName);
+    client.publish(groupTopic,sendVal);
+    waitingToSendConflictResolution=false;
+    Serial.println("sent resolution");
+
+    lastSentColorAt=millis(); //this (hopefully) ensures that if both clients sent conflicting resolutions at the same time, that will be resolved too.
+  }
   
 }
 
