@@ -16,6 +16,8 @@
 //to mark new code as valid and prevent rollback. See  esp_ota_mark_app_valid_cancel_rollback() in code
 #include <esp_ota_ops.h>
 
+#define MAX_GROUP_MEMBERS 20
+
 //Rotary Encoder setup
 #define ENCODER_PIN_IN1 18
 #define ENCODER_PIN_IN2 19
@@ -39,21 +41,24 @@ int colorIndex=0;
 
 int lastBrighnessFactor=500; //initialized to a value very different from what it will immediately be set to
 
+int rainbowEffectFirstPixelHue=0;
+
 bool configPortalActive=false;
 unsigned long configPortalStartedAt=0;
 
 bool firstConnectAttempt=true; //set to false after first connection attempt so initial boot actions aren't repeated
+unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.23"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.24"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[25];//="US";
 
 int numOtherClientsInGroup;//=1;
-char otherClientsInGroup[21][25]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
-bool otherClientsOnlineStatus[21]={false};
+char otherClientsInGroup[MAX_GROUP_MEMBERS+1][25]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
+bool otherClientsOnlineStatus[MAX_GROUP_MEMBERS+1]={false};
 char groupName[25];//="PHUSSandbox";
 int modelNumber;//=2; //1 is the original from 2021. 2 is the triple indicator neopixel version developed in 2024 <<-- OUTDATED. See OneNote documentation for new version numbers. ....And code should be updated to match
 //END CLIENT SPECIFIC VARIABLES------------
@@ -294,7 +299,7 @@ void loadClientSpecificVariables(){
     Serial.println(error.c_str());
     Serial.println("Usually restarting fixes this, so we will restart now...");
     Serial.println("If you are encountering this message in a loop, it probably means that the WiFi network you're connected to doesn't have internet access. Perhaps a captive portal.");
-    for(int i=0;i<10;i++){ //flash indicator rapidly to indicate this happened
+    for(int i=0;i<10;i++){ //flash indicator rapidly to indicate this happened ERROR FLASH
       delay(100);
       statusLEDs(100,0,0,0);
       delay(100);
@@ -315,7 +320,7 @@ void loadClientSpecificVariables(){
 
   //STEP 2: Using this client's group name, look up others!
   int countNumOtherClientsInGroup=0;
-  char otherClients[21][25]; //used to be char* otherClients[6]
+  char otherClients[MAX_GROUP_MEMBERS+1][25]; //used to be char* otherClients[6]
   if(strcmp(group,"None")!=0){
     String groupURL = "http://lumas.live:4000/api/groups/";
   
@@ -334,6 +339,7 @@ void loadClientSpecificVariables(){
       return;
     }
   
+
     // Extract array
     JsonArray heartIDs = docTwo["hearts"].as<JsonArray>();
     Serial.println("Heart IDs:");
@@ -348,8 +354,22 @@ void loadClientSpecificVariables(){
         countNumOtherClientsInGroup++;
       }
     }
-
+    if(countNumOtherClientsInGroup>MAX_GROUP_MEMBERS){ //ERROR FLASH
+      while(true){ //flash indicator rapidly to indicate this happened
+      delay(100);
+      statusLEDs(100,0,0,0);
+      delay(100);
+      statusLEDs(0,0,0,0);
+      }
+    }
   }
+
+  //Clear arrays (if the group is updated to fewer members, we don't want the old ones to stick around)
+  for(int i=0;i<MAX_GROUP_MEMBERS;i++){
+    //otherClientsInGroup[i]='\0'; //this doesn't work
+    otherClientsOnlineStatus[i]=false;
+  }
+  memset(otherClientsInGroup, 0, sizeof(otherClientsInGroup));
 
   //STEP 3: load variables in to local memory
   Serial.print("Putting value ");
@@ -777,6 +797,7 @@ void setup() {
   lights.begin();
   lights.clear();
   //startup animation
+  /*
   for(int i=0;i<200;i++){
     lights.setBrightness(i);
     for(int i=0;i<NUMPIXELS;i++){ //must set the color every time because I'm using setBrightness() as an animation and shouldn't be
@@ -791,10 +812,20 @@ void setup() {
     lastBrightness=i; //leave this variable at wherever we end up according to loop ctr end
   }
   lights.setBrightness(255); //added for v2 hearts. since we're no longer using this to change the brightness in other parts, we need to leave it at max
+  */
+
+  //new startup animation
+  int ambientBrightness=analogRead(34);
+  if(ambientBrightness<1400){ //if we've booted in a dark room, it may be a reboot due to network failure. Don't flood the room with rainbow in the middle of the night (<3 u Kenzie)
+    lights.setBrightness(5);
+  }else{
+    lights.setBrightness(255);
+  }
+  rainbowEffect(); //start the animation here. Keep calling this at least every 10 milliseconds until network connection sequence has completed
 
 
-  Serial.print("This client's MAC address is: ");
-  Serial.println(WiFi.macAddress());
+  //Serial.print("This client's MAC address is: ");
+  //Serial.println(WiFi.macAddress());
 
   Serial.println("Checking EEPROM configuration...");
   //read in client name before wifi setup because the variable is used for the network name
@@ -836,6 +867,7 @@ void setup() {
   macAddress=WiFi.macAddress(); //for some reason this seems to be the only time in wifi setup & retries that we can reliably get the MAC -_-
   unsigned long beginTime=millis();
   while(WiFi.status()!=WL_CONNECTED){
+    rainbowEffect();
     yield(); //prevent WDT reset
     if(millis()-beginTime>6000){ //if not connected after 6 seconds, we're probably not going to
       break;
@@ -851,6 +883,7 @@ void setup() {
 
   unsigned long initialConfigTimeoutTimer=millis();
   while(WiFi.status()!=WL_CONNECTED){ //stay here while wifi config portal is running for the first time
+    rainbowEffect(); //unfortunately the animation can't continue after this because the httpGet function is blocking, and is 99% of the wait from network connection to all set up (due to downloading data from database)
     wifiManager.process(); //to let wifimanager config portal run in the background
     if(WiFi.softAPgetStationNum()>0){ //if someone's connected to the AP, don't reset
       initialConfigTimeoutTimer=millis();
@@ -863,6 +896,7 @@ void setup() {
       beginTime=millis();
       while(WiFi.status()!=WL_CONNECTED && millis()-beginTime<6000){
         yield();
+        rainbowEffect();
       }
       if(WiFi.status()==WL_CONNECTED){
         Serial.println("reconnect attempt succesful!");
@@ -904,18 +938,19 @@ void setup() {
   pinMode(D2,OUTPUT); //color knob 2
   digitalWrite(D1,HIGH);
   digitalWrite(D2,LOW);*/
-//  currentColor=analogRead(A0);
+  //currentColor=analogRead(A0);
   
   currentColor=0;
   
   lastColorKnobVal=currentColor;
-  for(int i=0;i<NUMPIXELS;i++){
-    lights.setPixelColor(i, lights.Color(getColor(currentColor,'r'),getColor(currentColor,'g'),getColor(currentColor,'b')));
-  }
-   
-  //lights.setBrightness(analogRead(35)/16);
-  lights.show();
 
+  //commenting this out because it seems to do nothing really
+  /*  for(int i=0;i<NUMPIXELS;i++){
+      lights.setPixelColor(i, lights.Color(getColor(currentColor,'r'),getColor(currentColor,'g'),getColor(currentColor,'b')));
+    }
+    //lights.setBrightness(analogRead(35)/16);
+    lights.show();
+  */
 }
 
 
@@ -1025,6 +1060,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       client.unsubscribe(onlineStatusTopic);
       client.unsubscribe(dbUpdateTopic);
       updateTopicVariables();
+      loadClientSpecificVariables(); //this updates variables like the array of other online clients
       //now subscribe to new ones
       client.subscribe(groupTopic);
       client.subscribe(multiColorTopic);
@@ -1291,9 +1327,10 @@ void reconnect() {
       Serial.println("connected");
       if(firstConnectAttempt){
         client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
-        client.publish("startLocationUpdater","start"); //tell EC2 locationUpdater script to run. It will see this heart in the mosquitto logs and update it's IP and location in the AWS database
+        //client.publish("startLocationUpdater","start"); //10/26/25 -- WE'VE CHANGED ARCHETECTURE! This is no longer needed, and instead handled by a lambda that monitors log files     //tell EC2 locationUpdater script to run. It will see this heart in the mosquitto logs and update it's IP and location in the AWS database
       }
       firstConnectAttempt=false;
+      firstConnectAttemptAt=millis();
       receivedColorMode=false;
       // Once connected, publish an announcement and re-subscribe
       //Serial.println(groupTopic);
@@ -1562,7 +1599,7 @@ void loop(){
     strcat(sendVal,WiFi.macAddress().c_str());
     strcat(sendVal,",");
     strcat(sendVal,clientName);
-    client.publish(groupTopic,sendVal);
+    client.publish(groupTopic,sendVal,true);
     lastSentColorAt=millis();
     currentlyChangingColor=true;
   }
@@ -1576,7 +1613,7 @@ void loop(){
     strcat(sendVal,WiFi.macAddress().c_str());
     strcat(sendVal,",");
     strcat(sendVal,clientName);
-    client.publish(groupTopic,sendVal);
+    client.publish(groupTopic,sendVal,true);
   }
 
   if(multiColorMode){
@@ -1625,12 +1662,11 @@ void loop(){
       stripColors[i][1]=getColor(currentColor,'g');
       stripColors[i][2]=getColor(currentColor,'b');
     }
-    
   }
 
   //if nothing changed, no need to re-set the strip. (The only real point in doing this is to prevent v3.0 hearts without the level shifter from flickering so much, cause they flicker a small percentage of the time but only during strip updates. If this line weren't there, strip updates would be constant)
   //actually, there's a chance this helps WiFi reception too
-  if(posChangedBy!=0 || !brightnessChangedThisLoop || updateLightsRequiredThisLoop){ 
+  if((posChangedBy!=0 || !brightnessChangedThisLoop || updateLightsRequiredThisLoop) && ((!firstConnectAttempt && millis()-firstConnectAttemptAt>1000) || currentColor!=0)){ //!firstConnectAttempt means we've attempted broker connection already: only start setting the color if we've already connected to the broker (this prevents it from always flashing red on boot before syncing up). Give it 1 second to receive remote color, or as soon as the color iesn't the default (must've beenr receicved early)
     for(int i=0;i<NUMPIXELS;i++){
       lights.setPixelColor(i, lights.Color(stripColors[i][0]*(brighnessFactor/4096.0),stripColors[i][1]*(brighnessFactor/4096.0),stripColors[i][2]*(brighnessFactor/4096.0)));
       lights.show();
@@ -1653,7 +1689,7 @@ void resolveColorConflict(){ //if two users are changing the color simultaniousl
     strcat(sendVal,WiFi.macAddress().c_str());
     strcat(sendVal,",");
     strcat(sendVal,clientName);
-    client.publish(groupTopic,sendVal);
+    client.publish(groupTopic,sendVal,true);
     waitingToSendConflictResolution=false;
     Serial.println("sent resolution");
 
@@ -1701,4 +1737,30 @@ double calculateBrightnessThreshold(double b, double c) {
     }
     
     return z;
+}
+
+void rainbowEffect() {
+  for (int i = 0; i < 12; i++) { // For each pixel in strip...
+    int pixelHue = rainbowEffectFirstPixelHue + (i * 65536L / 12);
+    //strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(pixelHue)));
+    uint32_t tempPixelHue = lights.gamma32(lights.ColorHSV(pixelHue));
+    stripUpdateHSV(i, tempPixelHue); //store current color in stripCopy even though we're not using stripUpdate()
+  }
+  lights.show(); // Update strip with new contents
+  delay(11);  // Pause for a moment
+
+  rainbowEffectFirstPixelHue += 256; //emulating for loop
+  if (rainbowEffectFirstPixelHue >= 5 * 65536) { //emulating for loop
+    rainbowEffectFirstPixelHue = 0;
+  }
+}
+
+void stripUpdateHSV(int pixel, uint32_t c) {
+  int r;
+  int g;
+  int b;
+  r = (uint8_t)(c >> 16),
+  g = (uint8_t)(c >>  8),
+  b = (uint8_t)c;
+  lights.setPixelColor(pixel, lights.Color(r,g,b));
 }
