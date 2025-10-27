@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.24"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.25"}; //used to compare to GitHub firmware version to know whether to update
 
 //CLIENT SPECIFIC VARIABLES----------------
 char clientName[25];//="US";
@@ -883,7 +883,7 @@ void setup() {
 
   unsigned long initialConfigTimeoutTimer=millis();
   while(WiFi.status()!=WL_CONNECTED){ //stay here while wifi config portal is running for the first time
-    rainbowEffect(); //unfortunately the animation can't continue after this because the httpGet function is blocking, and is 99% of the wait from network connection to all set up (due to downloading data from database)
+    rainbowEffect(); 
     wifiManager.process(); //to let wifimanager config portal run in the background
     if(WiFi.softAPgetStationNum()>0){ //if someone's connected to the AP, don't reset
       initialConfigTimeoutTimer=millis();
@@ -896,7 +896,7 @@ void setup() {
       beginTime=millis();
       while(WiFi.status()!=WL_CONNECTED && millis()-beginTime<6000){
         yield();
-        rainbowEffect();
+        rainbowEffect(); //unfortunately the animation can't continue after this because the httpGet function is blocking, and is 99% of the wait from network connection to all set up (due to downloading data from database)
       }
       if(WiFi.status()==WL_CONNECTED){
         Serial.println("reconnect attempt succesful!");
@@ -943,6 +943,8 @@ void setup() {
   currentColor=0;
   
   lastColorKnobVal=currentColor;
+
+  lights.setBrightness(255); //If heart was booted in the dark, strip got set to dim mode. Set it back to full brightness in preperation for regular operation
 
   //commenting this out because it seems to do nothing really
   /*  for(int i=0;i<NUMPIXELS;i++){
