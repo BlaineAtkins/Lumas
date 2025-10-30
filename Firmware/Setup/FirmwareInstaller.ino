@@ -5,10 +5,18 @@
  * 
  * Optionally, you can enable logMAC, which will send the MAC address to a partner python program running on your computer before doing the firmware update. This is helpful if you are flashing a large batch of lumas and need to record all the new MAC addresses.
  */
-const char* ssid = "hoober geiger";
-const char* password = "hoobergeiger1703";
-bool logMAC = false; //true = send MAC to python program running on PC. Do not download firmware if MAC logging fails. false = Don't attempt PC connection, just download firmware immediately
-const char* serverName = "http://10.0.0.211:8000";
+const char* ssid = "Blaine-hotspot";
+const char* password = "cowsrock";
+bool logMAC = true; //true = send MAC to python program running on PC. Do not download firmware if MAC logging fails. false = Don't attempt PC connection, just download firmware immediately
+const char* serverName = "http://10.0.0.105:8000";
+
+const char hardwareVersion[]="3.1";
+const char* manufacture_date="10/31/25";
+
+
+char mqttPassword[15];
+
+const char charSet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
  
 #include <WiFi.h>
@@ -25,6 +33,8 @@ WiFiClient espClient;
 
 void setup() {
   Serial.begin(9600);
+
+
   // put your setup code here, to run once:
   Serial.println();
   Serial.print("Mac Address: ");
@@ -33,7 +43,7 @@ void setup() {
   Serial.println(ssid);
 
 
-  //WiFi.persistent(false); //don't save configuration to flash, otherwise it won't start a captive portal which lets the user set the strip length on next boot of real firmware
+  WiFi.persistent(false); //don't save configuration to flash, otherwise it won't start a captive portal which lets the user set the strip length on next boot of real firmware
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -41,6 +51,38 @@ void setup() {
     Serial.print(".");
   }
   Serial.println("successfully connected to wifi.");
+
+  //1: Generate MQTT password
+  for(int i=0;i<14;i++){
+    int randomIndex = random(sizeof(charSet) - 1); // -1 to exclude the null terminator
+    char randomChar = charSet[randomIndex];
+    mqttPassword[i]=randomChar;
+  }
+  //Serial.println(mqttPassword);
+
+  //2: Store values in EEPROM (MQTT password, hardware version, heart name "new heart")
+  EEPROM.begin(173);
+  EEPROM.write(0,'A'); //ABC tells program that EEPROM is initialized
+  EEPROM.write(1,'B');
+  EEPROM.write(2,'C');
+  for(int i=3;i<173;i++){ //clear EEPROM of any old values
+    EEPROM.write(i,0);
+  }
+  EEPROM.put(3,"New Heart");
+  EEPROM.put(29,hardwareVersion);
+  EEPROM.put(40,mqttPassword);
+  EEPROM.commit();
+  EEPROM.end();
+
+  EEPROM.begin(173);
+  for(int i=0;i<173;i++){
+    //char hi;
+    //EEPROM.read(i,hi);
+    Serial.print((char)EEPROM.read(i));
+  }
+
+  //3: Send above values to python script, along with manufacture date and MAC
+
   int httpResponseCode=0;
   if(logMAC){
 
@@ -56,7 +98,7 @@ void setup() {
       // Specify content-type header
       http.addHeader("Content-Type", "application/x-www-form-urlencoded");
       // Data to send with HTTP POST
-      String httpRequestData = WiFi.macAddress();           
+      String httpRequestData = WiFi.macAddress()+",New Heart,"+String(hardwareVersion)+","+mqttPassword+","+manufacture_date;        
       // Send HTTP POST request
       httpResponseCode = http.POST(httpRequestData);
       
