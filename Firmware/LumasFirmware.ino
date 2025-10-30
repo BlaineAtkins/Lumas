@@ -51,16 +51,21 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.25"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.26"}; //used to compare to GitHub firmware version to know whether to update
+
 
 //CLIENT SPECIFIC VARIABLES----------------
-char clientName[25];//="US";
+char clientName[25];
+char hardwareVersion[10];
+char MQTTPassword[15];
 
 int numOtherClientsInGroup;//=1;
 char otherClientsInGroup[MAX_GROUP_MEMBERS+1][25]; //08:3A:8D:CC:DE:62 is assembled, 7C:87:CE:BE:36:0C is bare board
 bool otherClientsOnlineStatus[MAX_GROUP_MEMBERS+1]={false};
 char groupName[25];//="PHUSSandbox";
-int modelNumber;//=2; //1 is the original from 2021. 2 is the triple indicator neopixel version developed in 2024 <<-- OUTDATED. See OneNote documentation for new version numbers. ....And code should be updated to match
+//int modelNumber; //oh no... removing this initialization causes a seg fault if you try to start the WiFi portal (by holding the botton button) and no other clients in the group are online. .......Even though this variable isn't used anywhere anymore 😭
+//.......wait, now that behavior is no longer there even if I comment out the initialization 🙃
+
 //END CLIENT SPECIFIC VARIABLES------------
 
 //unsigned long otherClientsLastPingReceived[6]={4294000000,4294000000,4294000000,4294000000,4294000000,4294000000}; //Updated whenever we receive a ping, and used to determine online status. The order follows otherClientsInGroup. --- Initialized to near max value to avoid indicator being green at boot
@@ -76,9 +81,9 @@ char dbUpdateTopic[70];
 
 bool receivedColorMode=false; //This variable is set true whenever we receive the multicolor mode, and false whenever we disconnect. This is to prevent this client from re-affirming the mode (publishing it to the broker to keep it active) incorrectly before we've actually received the current mode. It will probably be obsolete once we store this value in the database
 
-#define NUMPIXELS 12
+#define NUMPIXELS 13 //13th pixel is the status LED on v3.1 onwards. On v3.0 there is no 13th LED connected, so commands to it just get sent into the abyss, which is fine.
 Adafruit_NeoPixel lights(NUMPIXELS, 27, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel indicator(1, 4, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel indicator(1, 4, NEO_GRB + NEO_KHZ800); //only for hardware version 3.0
 int indicatorColor[3]={0,0,0};
 bool evenSecond=false;
 
@@ -215,9 +220,7 @@ void setup_wifi() {
     Serial.println(networkName);
 
     //set lights to indicate that we are in config mode
-    for(int i=0;i<3;i++){
-      statusLEDs(150,60,0,i);
-    }
+      statusLEDs(150,60,0);
 
     // Switch wifiManager config portal IP from default 192.168.4.1 to 8.8.8.8. This ensures auto-load on some android devices which have 8.8.8.8 hard-coded in the OS.
     manager.setAPStaticIPConfig(IPAddress(8,8,8,8), IPAddress(8,8,8,8), IPAddress(255,255,255,0));
@@ -298,12 +301,12 @@ void loadClientSpecificVariables(){
     Serial.print("JSON deserialization failed: ");
     Serial.println(error.c_str());
     Serial.println("Usually restarting fixes this, so we will restart now...");
-    Serial.println("If you are encountering this message in a loop, it probably means that the WiFi network you're connected to doesn't have internet access. Perhaps a captive portal.");
+    Serial.println("If you are encountering this message in a loop, it probably means that the WiFi network you're connected to doesn't have internet access (perhaps a captive portal), or you have weak WiFi signal.");
     for(int i=0;i<10;i++){ //flash indicator rapidly to indicate this happened ERROR FLASH
       delay(100);
-      statusLEDs(100,0,0,0);
+      statusLEDs(100,100,0);
       delay(100);
-      statusLEDs(0,0,0,0);
+      statusLEDs(0,0,0);
     }
     ESP.restart();
     return;
@@ -313,7 +316,9 @@ void loadClientSpecificVariables(){
   const char* id = doc["id"];
   const char* group = doc["group"];
   const char* heartName = doc["name"];
-  Serial.printf("Extracted values: id=%s, group=%s, name=%s\n", id, group, heartName);
+  const char* hardware_version = doc["hardware_version"];
+  const char* mqtt_psswd = doc["mqtt_password"];
+  Serial.printf("Extracted values: id=%s, group=%s, name=%s, hardware_version=%s\n", id, group, heartName);
   Serial.println(group);
 
 
@@ -357,9 +362,9 @@ void loadClientSpecificVariables(){
     if(countNumOtherClientsInGroup>MAX_GROUP_MEMBERS){ //ERROR FLASH
       while(true){ //flash indicator rapidly to indicate this happened
       delay(100);
-      statusLEDs(100,0,0,0);
+      statusLEDs(100,0,0);
       delay(100);
-      statusLEDs(0,0,0,0);
+      statusLEDs(0,0,0);
       }
     }
   }
@@ -377,10 +382,21 @@ void loadClientSpecificVariables(){
   Serial.print(" ----> ");
   strcpy(clientName,heartName);
   Serial.println(clientName);
+
+  Serial.println(mqtt_psswd);
+  strcpy(hardwareVersion,hardware_version);
+  strcpy(MQTTPassword,mqtt_psswd);
+
+  Serial.print("Hardware Version: ");
+  Serial.println(hardware_version); //BLAINEEEEEEE
   //COPY THIS NAME IN TO EEPROM IF IT DIFFERS, cause it is used in wifi setup pre-network connection
   EEPROM.begin(173);
   char ch_clientName[25];
   EEPROM.get(3,ch_clientName);
+  char ch_hardware_version[10];
+  EEPROM.get(29,ch_hardware_version);
+  char ch_mqtt_password[15];
+  EEPROM.get(40,ch_mqtt_password);
   Serial.print("Read in EEPROM value: ");
   Serial.println(ch_clientName);
   EEPROM.end();
@@ -390,13 +406,26 @@ void loadClientSpecificVariables(){
     EEPROM.put(3,clientName);
     EEPROM.end();
   }
+  if(strcmp(ch_hardware_version,hardwareVersion)){
+    Serial.println("Hardware Version updated, updating local EEPROM value");
+    EEPROM.begin(173);
+    EEPROM.put(29,hardwareVersion);
+    EEPROM.end();
+  }
+  if(strcmp(ch_mqtt_password,MQTTPassword)){
+    Serial.println("MQTT Password updated, updating local EEPROM value");
+    EEPROM.begin(173);
+    EEPROM.put(40,MQTTPassword);
+    EEPROM.end();
+  }
+
   Serial.print("Putting value ");
   Serial.print(group);
   Serial.print(" ----> ");
   strcpy(groupName,group);
   Serial.println(groupName);
   //modelNumber=atoi((httpResult.substring(nthIndex(httpResult,'\"',5)+1,nthIndex(httpResult,'\"',6))).c_str());
-  modelNumber=2; //currently not in AWS database <--- now it is lol. COde needs updated.
+
   
   if(strcmp(group,"None")!=0){
     numOtherClientsInGroup=countNumOtherClientsInGroup;
@@ -601,9 +630,7 @@ void firmwareUpdate(){
         Serial.println("Latest firmware version undefined. Likely you have a bad network connection.");
     }else {
         Serial.println("New firmware detected");
-        for(int i=0;i<3;i++){
-          statusLEDs(150,150,150,i); //all white indicates we're in a firmware update
-        }
+          statusLEDs(150,150,150); //all white indicates we're in a firmware update
         Serial.println("Current firmware version "+FirmwareVer);
         Serial.println("Firmware version "+payload+" is avalable");
         //httpUpdate.setLedPin(LED_BUILTIN, LOW);
@@ -768,7 +795,6 @@ void setup() {
   esp_ota_mark_app_valid_cancel_rollback();
 
   Serial.begin(9600);
-  delay(200);
 
   encoder = new RotaryEncoder(ENCODER_PIN_IN1, ENCODER_PIN_IN2, RotaryEncoder::LatchMode::TWO03);
   attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_IN1), checkEncoderPosition, CHANGE);
@@ -776,7 +802,7 @@ void setup() {
 
   //pinMode(34,INPUT); //light sensor input
 
-  //TODO -- this is from old darkness determination (pre-polynomial surface equation)
+
   int darkThresholdValue=1500;
   if(analogRead(34)<darkThresholdValue){
     isDark=true;
@@ -785,13 +811,6 @@ void setup() {
   }
   
 
-  indicator.begin();
-  indicator.clear();
-  indicator.show();
-  for(int i=0;i<3;i++){
-    statusLEDs(100,0,0,i);
-  }
-  
   
   //finsish lights setup
   lights.begin();
@@ -834,7 +853,15 @@ void setup() {
   //Serial.println(EEPROM.read(1));
   //Serial.println(EEPROM.read(2));
   if(!(EEPROM.read(0)=='A' && EEPROM.read(1)=='B' && EEPROM.read(2)=='C')){
-    Serial.println("EEPROM has never been initialized, initializing 173 bytes now.");
+    Serial.println("EEPROM has never been initialized!! Please run the New Lumas Setup script to configure this heart to work with the system");
+    while(true){
+      //flash indicator rapidly to indicate this happened ERROR FLASH
+      delay(100);
+      statusLEDs(0,0,100);
+      delay(100);
+      statusLEDs(0,0,0);
+    }
+    /*Serial.println("EEPROM has never been initialized, initializing 173 bytes now.");
     EEPROM.write(0,'A');
     EEPROM.write(1,'B');
     EEPROM.write(2,'C');
@@ -843,6 +870,7 @@ void setup() {
     }
     EEPROM.put(3,"New Heart");
     EEPROM.commit();
+    */
   }else{
     Serial.println("EEPROM is already set up");
   }
@@ -852,10 +880,28 @@ void setup() {
   EEPROM.begin(173);
   char ch_clientName[25];
   EEPROM.get(3,ch_clientName);
+
+  char ch_hardware_version[10];
+  EEPROM.get(29,ch_hardware_version);
+
+  char ch_MQTT_Password[15];
+  EEPROM.get(40,ch_MQTT_Password);
+
   EEPROM.end();
   strcpy(clientName,ch_clientName);
-  //Serial.print("read in ");
-  //Serial.println(clientName);
+  strcpy(hardwareVersion,ch_hardware_version);
+  strcpy(MQTTPassword,ch_MQTT_Password);
+
+
+  if(strcmp(hardwareVersion,"3.0")==0){ //only initialize if we're using v3.0 which has a seperate "strip" for the indicator
+    indicator.begin();
+    indicator.clear();
+    indicator.show();
+  }
+
+  //must set status LED after reading in EEPROM hardware version, since hardware for status LEDs are different depending on hardware version
+  statusLEDs(100,0,0);
+
   
   //setup_wifi(); //switching to on-demand config
   // if you get here you have connected to the WiFi
@@ -877,7 +923,7 @@ void setup() {
     Serial.println("Succesfully connected to saved network, config portal off");
   }else{
     Serial.println("failed to connect, starting config portal");
-    statusLEDs(150,50,0,0);
+    statusLEDs(150,50,0);
     startConfigPortal();
   }
 
@@ -956,15 +1002,21 @@ void setup() {
 }
 
 
-void statusLEDs(int red, int green, int blue, int indicatorNum){
+void statusLEDs(int red, int green, int blue){
   //set global variables so that if we have to flash it, we know what color it's supposed to be
   indicatorColor[0]=red;
   indicatorColor[1]=green;
   indicatorColor[2]=blue;
+
   if(!configPortalActive){
-    if(indicatorNum<3){ //ignore out of bounds 
-      indicator.setPixelColor(indicatorNum,indicator.Color(red,green,blue));
+    //Serial.print("HARDWARE VERSION IS ");
+    //Serial.println(hardwareVersion);
+    if(strcmp(hardwareVersion,"3.0")==0){
+      indicator.setPixelColor(0,indicator.Color(red,green,blue));
       indicator.show();
+    }else if(strcmp(hardwareVersion,"3.1")==0){
+      lights.setPixelColor(12,indicator.Color(red,green,blue));
+      lights.show();
     }
   }else{ //if the config portal is active, alternate between showing the normal status and that the config portal is launched.
     int startingWith=evenSecond;
@@ -977,12 +1029,22 @@ void statusLEDs(int red, int green, int blue, int indicatorNum){
       //Serial.println("swapping!");
       if(evenSecond){
         //Serial.println("general status");
-        indicator.setPixelColor(0,indicator.Color(indicatorColor[0],indicatorColor[1],indicatorColor[2]));
-        indicator.show();
+        if(strcmp(hardwareVersion,"3.0")==0){
+          indicator.setPixelColor(0,indicator.Color(indicatorColor[0],indicatorColor[1],indicatorColor[2]));
+          indicator.show();
+        }else if(strcmp(hardwareVersion,"3.1")==0){
+          lights.setPixelColor(12,indicator.Color(indicatorColor[0],indicatorColor[1],indicatorColor[2]));
+          lights.show();
+        }
       }else{
         //Serial.println("WiFi portal status");
-        indicator.setPixelColor(0,indicator.Color(150,60,0));
-        indicator.show();
+        if(strcmp(hardwareVersion,"3.0")==0){
+          indicator.setPixelColor(0,indicator.Color(150,60,0));
+          indicator.show();
+        }else if(strcmp(hardwareVersion,"3.1")==0){
+          lights.setPixelColor(12,indicator.Color(150,60,0));
+          lights.show();
+        }
       }
     }
 
@@ -1096,9 +1158,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           #define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/RemoteHearts/main/sandboxFirmware.bin"
           WiFiClientSecure client;
           client.setInsecure(); //prevents having to update the CA certificate periodically
-          for(int i=0;i<3;i++){
-            statusLEDs(150,150,150,i); //all white indicates we're in a firmware update
-          }
+          statusLEDs(150,150,150); //all white indicates we're in a firmware update
           //httpUpdate.setLedPin(LED_BUILTIN, LOW);
           t_httpUpdate_return ret = httpUpdate.update(client, URL_fw_Bin);
         }else{
@@ -1353,9 +1413,7 @@ void reconnect() {
     } else {
       //statusLEDs(100,0,0,0);
       //for now, this pattern means we are offline
-      for(int i=0;i<3;i++){
-        statusLEDs(100,0,0,i);
-      }
+        statusLEDs(100,0,0);
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in  seconds");
@@ -1407,9 +1465,9 @@ void pingAndStatus(){
     }
   }
   if(aClientIsOnline){
-    statusLEDs(0,80,0,0); //25 is almost not visible next to a window. 50 is faint but solidly visible. 80 is perhaps on the dimmer side, but a solidly acceptable color for an indicator light
+    statusLEDs(0,80,0); //25 is almost not visible next to a window. 50 is faint but solidly visible. 80 is perhaps on the dimmer side, but a solidly acceptable color for an indicator light
   }else{
-    statusLEDs(0,0,25,0); 
+    statusLEDs(0,0,25); 
   }
   
 }
@@ -1447,7 +1505,7 @@ void loop(){
         Serial.println("Starting config portal");
         configPortalActive=true;
         configPortalStartedAt=millis();
-        statusLEDs(150,50,0,0); //set it to orange so it immediately shows to tell the user they've done it correctly. Once startConfigPortal() finishes, pingAndStatus() will take over again
+        statusLEDs(150,50,0); //set it to orange so it immediately shows to tell the user they've done it correctly. Once startConfigPortal() finishes, pingAndStatus() will take over again
         startConfigPortal();
       }
     }
@@ -1455,6 +1513,7 @@ void loop(){
     btnCurrentlyPressed=false;
     shortPressMsgSent=false;
   }
+
 
   wifiManager.process(); //let config portal run in the background
 
