@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.26"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.27"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -1385,7 +1385,9 @@ void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (client.connect(WiFi.macAddress().c_str(),"","",onlineStatusTopic,0,false,("Offline,"+WiFi.macAddress()).c_str())){
+    String macHyphens=WiFi.macAddress();
+    macHyphens.replace(":", "-");
+    if (client.connect(WiFi.macAddress().c_str(),macHyphens.c_str(),MQTTPassword,onlineStatusTopic,2,false,("Offline,"+WiFi.macAddress()).c_str())){
       Serial.println("connected");
       if(firstConnectAttempt){
         client.publish(onlineStatusTopic,("Online,"+WiFi.macAddress()).c_str());
@@ -1499,6 +1501,10 @@ void loop(){
       if(millis()-btnPressedAt>shortPressTime && !shortPressMsgSent){
         Serial.println("SHORT BTN PRESS (note, this fires on button press, not un-press. So long press will always trigger this first).");
         client.publish("LumasHearts/hearts/verify",("shortPress, " + WiFi.macAddress()).c_str());
+        String macHyphens = WiFi.macAddress(); 
+        macHyphens.replace(":", "-"); //since colons can't be part of an MQTT username, the username has to use hyphens. And since the Mosquitto ACL grants topic access based on username, this topic has to be formatted the same way.
+        String verifyTopic="LumasHearts/harts/verify/"+macHyphens;
+        client.publish(verifyTopic.c_str(),("shortPress, " + WiFi.macAddress()).c_str());
         shortPressMsgSent=true;
       }
       if(millis()-btnPressedAt>2000 && !configPortalActive){
