@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.27"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.28"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -385,7 +385,7 @@ void loadClientSpecificVariables(){
 
   Serial.println(mqtt_psswd);
   strcpy(hardwareVersion,hardware_version);
-  strcpy(MQTTPassword,mqtt_psswd);
+  //strcpy(MQTTPassword,mqtt_psswd);
 
   Serial.print("Hardware Version: ");
   Serial.println(hardware_version); //BLAINEEEEEEE
@@ -406,17 +406,18 @@ void loadClientSpecificVariables(){
     EEPROM.put(3,clientName);
     EEPROM.end();
   }
-  if(strcmp(ch_hardware_version,hardwareVersion)){
+  if(strcmp(ch_hardware_version,hardwareVersion)!=0){
     Serial.println("Hardware Version updated, updating local EEPROM value");
     EEPROM.begin(173);
     EEPROM.put(29,hardwareVersion);
     EEPROM.end();
   }
-  if(strcmp(ch_mqtt_password,MQTTPassword)){
+  if(strcmp(ch_mqtt_password,mqtt_psswd)!=0 && strcmp(mqtt_psswd,"USELOCAL")!=0){
     Serial.println("MQTT Password updated, updating local EEPROM value");
     EEPROM.begin(173);
     EEPROM.put(40,MQTTPassword);
     EEPROM.end();
+    strcpy(MQTTPassword,mqtt_psswd);
   }
 
   Serial.print("Putting value ");
