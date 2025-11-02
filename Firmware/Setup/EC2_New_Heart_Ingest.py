@@ -63,10 +63,10 @@ for line in lines[1:]:
 #print("for MQTT passwords, put USELOCAL for dynamodb")
 
 
-print("Will now add entries to the Mosquitto Password file at "+mosquittoPWFile)
+print("Will now add entries to the Mosquitto Password file at "+mosquittoPWFile+"...")
 #Things to add to Mosquitto ACL:
 for device in devices:
-    print(str(device['id'].replace(":",""))+" - "+str(device['mqtt_password']))
+    #print(str(device['id'].replace(":","-"))+" - "+str(device['mqtt_password']))
 
     os.system(str("sudo mosquitto_passwd -b "+mosquittoPWFile+" "+str(device['id'].replace(":","-"))+" "+str(device['mqtt_password'])))
 
@@ -75,8 +75,9 @@ for device in devices:
 for device in devices:
     device["mqtt_password"] = "USELOCAL"
 
-print("Will now add rows to AWS DynamoDB")
+print("Will now add rows to AWS DynamoDB...")
 batch_write_devices(devices)
+print("done!")
 
 #print (devices)
 
