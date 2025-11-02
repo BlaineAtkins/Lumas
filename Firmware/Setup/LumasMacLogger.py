@@ -29,13 +29,13 @@ class handler(BaseHTTPRequestHandler):
                     myfile.write(",")
                     myfile.write("None") #group
                     myfile.write(",")
-                    myfile.write("unknown") #ip
+                    myfile.write("None") #owner
                     myfile.write(",")
-                    myfile.write("unknown") #location
+                    myfile.write("Offline") #status
                     myfile.write(",")
-                    myfile.write("") #owner
+                    myfile.write("195.20.254.54") #ip
                     myfile.write(",")
-                    myfile.write("") #status
+                    myfile.write("Somewhere") #location
 
 with HTTPServer((SERVER_IP, 8000), handler) as server:
     server.serve_forever()

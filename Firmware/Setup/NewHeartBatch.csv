@@ -1,1 +1,3 @@
-id,name,hardware_version,mqtt_password,manufacture_date,group,ip,location,owner,status
+id,name,hardware_version,mqtt_password,manufacture_date,group,owner,status,ip,location
+AA:AA:AA:AA:AA:AA,Sample Heart,0.0,sample,8/31/2000,None,None,Offline,195.20.254.54,Somewhere
+,,,,,,,,,
