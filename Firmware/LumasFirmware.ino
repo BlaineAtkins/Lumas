@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.29"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.30"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -1504,7 +1504,7 @@ void loop(){
         //client.publish("LumasHearts/hearts/verify",("shortPress, " + WiFi.macAddress()).c_str()); //changed to use new topic below
         String macHyphens = WiFi.macAddress(); 
         macHyphens.replace(":", "-"); //since colons can't be part of an MQTT username, the username has to use hyphens. And since the Mosquitto ACL grants topic access based on username, this topic has to be formatted the same way.
-        String verifyTopic="LumasHearts/harts/verify/"+macHyphens;
+        String verifyTopic="LumasHearts/hearts/verify/"+macHyphens;
         client.publish(verifyTopic.c_str(),("shortPress, " + WiFi.macAddress()).c_str());
         shortPressMsgSent=true;
       }
