@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.31"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.32"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -318,7 +318,7 @@ void loadClientSpecificVariables(){
   const char* heartName = doc["name"];
   const char* hardware_version = doc["hardware_version"];
   const char* mqtt_psswd = doc["mqtt_password"];
-  Serial.printf("Extracted values: id=%s, group=%s, name=%s, hardware_version=%s\n", id, group, heartName);
+  Serial.printf("Extracted values: id=%s, group=%s, name=%s, hardware_version=%s, mqtt_password=%s\n", id, group, heartName, hardware_version, mqtt_psswd);
   Serial.println(group);
 
 
@@ -412,10 +412,16 @@ void loadClientSpecificVariables(){
     EEPROM.put(29,hardwareVersion);
     EEPROM.end();
   }
+  /*Serial.print("EEPROM MQTT PASSWORD ----------- ");
+  Serial.println(ch_mqtt_password);
+  Serial.print("AWS MQTT PASSWORD ----------- ");
+  Serial.println(mqtt_psswd);*/
   if(strcmp(ch_mqtt_password,mqtt_psswd)!=0 && strcmp(mqtt_psswd,"USELOCAL")!=0){
     Serial.println("MQTT Password updated, updating local EEPROM value");
     EEPROM.begin(173);
-    EEPROM.put(40,mqtt_psswd);
+    char ch_AWSMQTT[15];
+    strcpy(ch_AWSMQTT,mqtt_psswd); //it freaks out if you try to put a char* in eeprom, so copy it to fixed length first
+    EEPROM.put(40,ch_AWSMQTT);
     EEPROM.end();
     strcpy(MQTTPassword,mqtt_psswd);
   }
