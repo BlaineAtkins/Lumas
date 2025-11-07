@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.30"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.31"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -1735,7 +1735,7 @@ void loop(){
   //if nothing changed, no need to re-set the strip. (The only real point in doing this is to prevent v3.0 hearts without the level shifter from flickering so much, cause they flicker a small percentage of the time but only during strip updates. If this line weren't there, strip updates would be constant)
   //actually, there's a chance this helps WiFi reception too
   if((posChangedBy!=0 || !brightnessChangedThisLoop || updateLightsRequiredThisLoop) && ((!firstConnectAttempt && millis()-firstConnectAttemptAt>1000) || currentColor!=0)){ //!firstConnectAttempt means we've attempted broker connection already: only start setting the color if we've already connected to the broker (this prevents it from always flashing red on boot before syncing up). Give it 1 second to receive remote color, or as soon as the color iesn't the default (must've beenr receicved early)
-    for(int i=0;i<NUMPIXELS;i++){
+    for(int i=0;i<12;i++){
       lights.setPixelColor(i, lights.Color(stripColors[i][0]*(brighnessFactor/4096.0),stripColors[i][1]*(brighnessFactor/4096.0),stripColors[i][2]*(brighnessFactor/4096.0)));
       lights.show();
     }
