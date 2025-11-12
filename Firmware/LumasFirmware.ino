@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.32"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.33"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -1370,7 +1370,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           break; //no need to check every single one
         }
       }
-      if(!knowOfOthersOnline && !(strcmp(ch_fromClientName,"WEB_APP")==0) && rcvNum!=-1){ //if we didn't know, re-run check algorithm
+      if(!knowOfOthersOnline && !(strcmp(ch_fromClientName,"WEB_APP")==0) && rcvNum!=-1 && rcvNum!=-2){ //if we didn't know, re-run check algorithm
         /*Serial.println();
         Serial.println();
         Serial.println();
@@ -1476,7 +1476,7 @@ void pingAndStatus(){
   if(aClientIsOnline){
     statusLEDs(0,80,0); //25 is almost not visible next to a window. 50 is faint but solidly visible. 80 is perhaps on the dimmer side, but a solidly acceptable color for an indicator light
   }else{
-    statusLEDs(0,0,25); 
+    statusLEDs(0,0,50); 
   }
   
 }
