@@ -51,7 +51,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.33"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.34"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -1089,7 +1089,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       multiColorMode=false;
     }
     Serial.println(multiColorMode);
-  }else if(strcmp(topic,onlineStatusTopic)==0 && strcmp(groupTopic,"None")!=0){
+  }else if(strcmp(topic,onlineStatusTopic)==0 && strcmp(groupTopic,"LumasHearts/groups/None/color")!=0){
 
     //Serial.print("Received online status: ");
     //Serial.println(String((char*)payload));
@@ -1227,7 +1227,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       }
     }
     
-  }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"None")!=0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
+  }else if(strcmp(topic,groupTopic)==0 && strcmp(groupTopic,"LumasHearts/groups/None/color")!=0){ //unclaimed hearts go in the "None" group. So ignore incoming commands if we're in that group, because they are not supposed to be "connected"
     
 
     String strPayload = String(payloadCStr);
@@ -1476,7 +1476,7 @@ void pingAndStatus(){
   if(aClientIsOnline){
     statusLEDs(0,80,0); //25 is almost not visible next to a window. 50 is faint but solidly visible. 80 is perhaps on the dimmer side, but a solidly acceptable color for an indicator light
   }else{
-    statusLEDs(0,0,50); 
+    statusLEDs(0,0,80); 
   }
   
 }
@@ -1673,7 +1673,9 @@ void loop(){
     strcat(sendVal,WiFi.macAddress().c_str());
     strcat(sendVal,",");
     strcat(sendVal,clientName);
-    client.publish(groupTopic,sendVal,true);
+    if(strcmp(groupTopic,"LumasHearts/groups/None/color")!=0){ //don't send color data to the None group
+      client.publish(groupTopic,sendVal,true);
+    }
     lastSentColorAt=millis();
     currentlyChangingColor=true;
   }
@@ -1687,7 +1689,9 @@ void loop(){
     strcat(sendVal,WiFi.macAddress().c_str());
     strcat(sendVal,",");
     strcat(sendVal,clientName);
-    client.publish(groupTopic,sendVal,true);
+    if(strcmp(groupTopic,"LumasHearts/groups/None/color")!=0){ //don't send color data to the None group
+      client.publish(groupTopic,sendVal,true);
+    }
   }
 
   if(multiColorMode){
