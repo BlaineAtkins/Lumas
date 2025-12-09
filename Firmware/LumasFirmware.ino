@@ -55,6 +55,7 @@ int colorIndex=0;
 int lastBrighnessFactor=500; //initialized to a value very different from what it will immediately be set to
 
 int rainbowEffectFirstPixelHue=0;
+int rainbowBrightness=255; //changed at boot
 
 bool configPortalActive=false;
 unsigned long configPortalStartedAt=0;
@@ -64,7 +65,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.35"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.36"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -853,14 +854,18 @@ void setup() {
   lights.setBrightness(255); //added for v2 hearts. since we're no longer using this to change the brightness in other parts, we need to leave it at max
   */
 
+  lights.setBrightness(255);
+
   //new startup animation
   int ambientBrightness=analogRead(34);
   if(ambientBrightness<1400){ //if we've booted in a dark room, it may be a reboot due to network failure. Don't flood the room with rainbow in the middle of the night (<3 u Kenzie)
-    lights.setBrightness(5);
+    //lights.setBrightness(5); //don't set it for the whole strip, or it affects the status LED too
+    rainbowBrightness=5;
   }else{
-    lights.setBrightness(255);
+    //lights.setBrightness(255);
+    rainbowBrightness=255;
   }
-  rainbowEffect(); //start the animation here. Keep calling this at least every 10 milliseconds until network connection sequence has completed
+  rainbowEffect(rainbowBrightness); //start the animation here. Keep calling this at least every 10 milliseconds until network connection sequence has completed
 
 
   //Serial.print("This client's MAC address is: ");
@@ -943,7 +948,7 @@ void setup() {
   macAddress=WiFi.macAddress(); //for some reason this seems to be the only time in wifi setup & retries that we can reliably get the MAC -_-
   unsigned long beginTime=millis();
   while(WiFi.status()!=WL_CONNECTED){
-    rainbowEffect();
+    rainbowEffect(rainbowBrightness);
     yield(); //prevent WDT reset
     if(millis()-beginTime>6000){ //if not connected after 6 seconds, we're probably not going to
       break;
@@ -959,7 +964,7 @@ void setup() {
 
   unsigned long initialConfigTimeoutTimer=millis();
   while(WiFi.status()!=WL_CONNECTED){ //stay here while wifi config portal is running for the first time
-    rainbowEffect(); 
+    rainbowEffect(rainbowBrightness); 
     wifiManager.process(); //to let wifimanager config portal run in the background
     if(WiFi.softAPgetStationNum()>0){ //if someone's connected to the AP, don't reset
       initialConfigTimeoutTimer=millis();
@@ -972,7 +977,7 @@ void setup() {
       beginTime=millis();
       while(WiFi.status()!=WL_CONNECTED && millis()-beginTime<6000){
         yield();
-        rainbowEffect(); //unfortunately the animation can't continue after this because the httpGet function is blocking, and is 99% of the wait from network connection to all set up (due to downloading data from database)
+        rainbowEffect(rainbowBrightness); //unfortunately the animation can't continue after this because the httpGet function is blocking, and is 99% of the wait from network connection to all set up (due to downloading data from database)
       }
       if(WiFi.status()==WL_CONNECTED){
         Serial.println("reconnect attempt succesful!");
@@ -1869,12 +1874,24 @@ double calculateBrightnessThresholdv3_0(double b, double c) {
 
 
 
-void rainbowEffect() {
+void rainbowEffect(int effectBrightness) {
   for (int i = 0; i < 12; i++) { // For each pixel in strip...
     int pixelHue = rainbowEffectFirstPixelHue + (i * 65536L / 12);
     //strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(pixelHue)));
     uint32_t tempPixelHue = lights.gamma32(lights.ColorHSV(pixelHue));
-    stripUpdateHSV(i, tempPixelHue); //store current color in stripCopy even though we're not using stripUpdate()
+
+    // Extract RGB components
+    uint8_t r = (tempPixelHue >> 16) & 0xFF;
+    uint8_t g = (tempPixelHue >> 8) & 0xFF;
+    uint8_t b = tempPixelHue & 0xFF;
+
+    // Scale each channel by 5/255
+    r = (r * effectBrightness) / 255;
+    g = (g * effectBrightness) / 255;
+    b = (b * effectBrightness) / 255;
+
+    lights.setPixelColor(i, lights.Color(r,g,b));
+    //stripUpdateHSV(i, tempPixelHue); //store current color in stripCopy even though we're not using stripUpdate()
   }
   lights.show(); // Update strip with new contents
   delay(11);  // Pause for a moment
@@ -1885,6 +1902,7 @@ void rainbowEffect() {
   }
 }
 
+/*
 void stripUpdateHSV(int pixel, uint32_t c) {
   int r;
   int g;
@@ -1894,6 +1912,7 @@ void stripUpdateHSV(int pixel, uint32_t c) {
   b = (uint8_t)c;
   lights.setPixelColor(pixel, lights.Color(r,g,b));
 }
+*/
 
 
 
