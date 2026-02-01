@@ -1,0 +1,6 @@
+Washington B&O / Excise Taxes are due each quarter. Stripe should be set to automatically generate the CSV of itemized transactions w/ taxes each quarter (in the tax section of the dashboard).
+
+Once you have that file, you can run this python script and it will output the three numbers needed to file quarterly B&O taxes on My DOR.
+1. Total of sales in Washington State
+2. Sales Tax collected in Washington State
+3. Total of out-of-state sales (to be deducted from WA tax obligation)
