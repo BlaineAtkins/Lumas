@@ -1,12 +1,12 @@
 import pandas as pd
 
-# Load the CSV
+
 df = pd.read_csv("TaxDetails.csv")
 
 # 1. Sum filing_tax_amount
 WASalesTaxCollected = df["filing_tax_amount"].sum()
 
-# 2. Remove duplicates based on (id, line_item_id)
+# 2. Remove duplicates so that only one of each line-item remains. (So remove all but one of transactions with the same ID and line_item_id)
 #    keep="first" ensures one row from each duplicate group remains
 df_unique = df.drop_duplicates(subset=["id", "line_item_id"], keep="first")
 
