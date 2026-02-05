@@ -1,4 +1,4 @@
-#include <Adafruit_NeoPixel.h>
+#include <Adafruit_NeoPixel.h> //as of Dec 2025 newer versions aren't compatible (strip is not updated). Use v1.15.3. ESP core is 3.3.0 if that's relevant.
 #include <WiFi.h>
 #include <DNSServer.h>
 //#include <WiFiManager.h>         // quotation marks usues library in sketch folder which i can customize the webpage for. PLEASE NOTE -- in earlier versions, WiFiManager.cpp had digitalWrite() and analogWrite() lines manually added by Blaine for the status LED. Now that the status LEDs use neopixel, the library version with those lines should NOT be used, otherwise the LED strip will flicker along with other unexpected behavior. /// BREAKING NEWS: We have once again modified the library, this time to display the MAC in the captive portal. This version of the library has been renamed to WiFiManagerLumas
@@ -2246,4 +2246,5 @@ int calculateBrightnessThreshold(int brightness, int color) {
 
     // 3. Return the result rounded to the nearest integer
     return static_cast<int>(std::round(predicted_M));
+
 }
