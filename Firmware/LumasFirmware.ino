@@ -65,7 +65,7 @@ unsigned long firstConnectAttemptAt=0;
 
 bool waitingToSendConflictResolution=false;
 
-const String FirmwareVer={"0.36"}; //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer={"0.37"}; //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -101,7 +101,7 @@ Adafruit_NeoPixel indicator(1, 4, NEO_GRB + NEO_KHZ800); //only for hardware ver
 int indicatorColor[3]={0,0,0};
 bool evenSecond=false;
 
-const char* mqtt_server = "lumas.live";
+const char* mqtt_server = "mqtt.lumas.live";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -2246,5 +2246,4 @@ int calculateBrightnessThreshold(int brightness, int color) {
 
     // 3. Return the result rounded to the nearest integer
     return static_cast<int>(std::round(predicted_M));
-
 }
