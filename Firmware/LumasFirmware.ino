@@ -1190,7 +1190,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           firmwareUpdate();
         }else if(adminPayload=="alt"){
           Serial.println("updating from alt firmware");
-          #define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/RemoteHearts/main/sandboxFirmware.bin"
+          #define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/sandboxFirmware.bin"
           WiFiClientSecure client;
           client.setInsecure(); //prevents having to update the CA certificate periodically
           statusLEDs(150,150,150); //all white indicates we're in a firmware update
