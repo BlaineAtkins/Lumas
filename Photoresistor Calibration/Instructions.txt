@@ -1,3 +1,10 @@
+6/5/26 UPDATE: A goo ddata set has been collected (I think using a different algorithm).
+To calibrate future Lumas the easy way using that dataset, follow the instructions at the top of LumasLDRCalibration.ino in this directory
+
+
+
+----------------------Historical----------------------
+
 1. To collect data, set up the Lumas in a room that's right on the auto-dim threshold. That is, if the room was any darker, you'd want the heart to be dim. Better if the room is slightly too bright than slightly too dark.
 
 2. Next, set up a PC on the same network and run the PhotoResistorReceiveValues python program on it. Make sure to change the IP address in both that and the PhotoResistorSendValues program.
