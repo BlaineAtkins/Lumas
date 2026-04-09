@@ -43,7 +43,9 @@ void setup() {
   Serial.print("Connecting to ");
   Serial.println(ssid);
 
-  WiFi.disconnect(true); //erases any previously saved SSID and passwords (like ones used during calibration)
+  WiFi.mode(WIFI_STA); //must be sta to erase credentials (Thanks tzapu!)
+  delay(500); //apparently also potentially necessary
+  WiFi.disconnect(true,true); //erases any previously saved SSID and passwords (like ones used during calibration)
   WiFi.persistent(false); //don't save configuration to flash, otherwise it won't start a captive portal which lets the user set the strip length on next boot of real firmware
   WiFi.begin(ssid, password);
 
