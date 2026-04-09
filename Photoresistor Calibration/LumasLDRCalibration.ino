@@ -1,10 +1,10 @@
 /*
   On Lumas versions with a photoresistor for a light sensor, run this before FirmwareInstaller to calibrate the photoresistor
-  Enter your WiFi credentials, then upload this code to a Lumas and put it in a dark room at max brightness. Do not change the color (which initializes at 904)
+  Enter your WiFi credentials, then upload this code to a Lumas and put it in a dark room at max brightness. Keep auto-dim switch OFF. Do not change the color (which initializes at 904)
   Subscribe to LumasLDRCalibration/readings.
   Take 10.1 and divide it by the TotalLux value reported (ensure adjustVal=1.0 in this sketch!!)
   Send the resulting value to LumasLDRCalibration/set (this will set it in running memory and in EEPROM, but this program doesn't read eeprom on reboot)
-  Test whether it properly goes bright/dark in bright/dark rooms for a variety of colors. Tweak the value if needed.
+  Turn auto-dim switch back on. Test whether it properly goes bright/dark in bright/dark rooms for a variety of colors. Tweak the value if needed.
 
   Once you're done, you can run FirmwareInstaller, and it'll be good to go! (FirmwareInstaller will wipe your WiFi credentials, download the latest firmware, and will keep the value you just saved to EEPROM)
 
@@ -2275,7 +2275,7 @@ void loop() {
   globalBrightness=knobBrightness; //default to not bright if we comment out the chunk of brightness logic
 
 
-  if(output<40 && !isDark){ //if brightness falls below __ while bright, go dark. /// on OG, 40 is good
+  if(output<40 && !isDark && digitalRead(23)){ //if brightness falls below __ while bright, go dark. Also only if auto-dim switch is on
     globalBrightness=5;
     isDark=true;
   }
@@ -2296,7 +2296,7 @@ void loop() {
   Serial.print("\t Ambient Brightness: ");
   Serial.print(mapped);
   Serial.println();
-  client.publish("LumasLDRCalibration/readings",("Color: "+String(color)+"  A: "+String(mapped)+"    T: "+String(totalLux)+"   R: "+String(rawSensor)+"").c_str());
+  client.publish("LumasLDRCalibration/readings",("Color: "+String(color)+"  A: "+String(mapped)+"    T: "+String(totalLux)+"   R: "+String(rawSensor)+" "+WiFi.macAddress()).c_str());
   //delay(400);
 
 
