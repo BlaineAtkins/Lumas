@@ -1176,7 +1176,7 @@ const uint16_t LED_Contribution_Lookup[1025][4] = {
   {0, 1192, 2544, 3142}, // Color 1021
   {0, 1200, 2543, 3152}, // Color 1022
   {0, 1198, 2544, 3159}, // Color 1023
-  {0, 1189, 2544, 3369} // Color 1024
+  {0, 1198, 2544, 3159} // Color 1024. Note -- the experimental result was invalid due to an overflow error, so I've manually set this to the same value as 1023, because it *is* actually the same color
 };
 
 
@@ -1219,18 +1219,18 @@ int getColor(int color, char component) {
     color = color - 170 * 5;
     g = 0;
     r = 255;
-    b = ((173 - color) / 173.0) * 255;  //173 cause this loop absorbs the remainder of 1024/6
+    b = ((173 - color) / 173.0) * 255;  //173 cause this loop absorbs the remainder of 1024/6. ..... 4/18/26 -- discovered that 1024 returns a negative number which causes overflow to max. Fixed this by constraining the result.
   } else {                              //should never be called, but if someone calls for a number outside of the range, we should return black instead of some strange number
     r = 0;
     g = 0;
     b = 0;
   }
   if (component == 'r') {
-    return r;
+    return constrain(r,0,255);
   } else if (component == 'g') {
-    return g;
+    return constrain(g,0,255);
   } else if (component == 'b') {
-    return b;
+    return constrain(b,0,255);
   } else {
     return 0;  //return 0 if they call for a component other than r/g/b
   }
