@@ -10,7 +10,7 @@
 //#include <WiFiUdp.h> //for getting google sheet
 #include <ArduinoJson.h>
 #include <WiFiClientSecure.h>
-
+#include "Adafruit_VEML7700.h"
 #include <RotaryEncoder.h>
 
 //to mark new code as valid and prevent rollback. See  esp_ota_mark_app_valid_cancel_rollback() in code
@@ -37,6 +37,8 @@ IRAM_ATTR void checkEncoderPosition()  //ISR called on any change of one of the 
 {
   encoder->tick();  // just call tick() to check the state.
 }
+
+Adafruit_VEML7700 veml = Adafruit_VEML7700();
 
 WiFiManager wifiManager;
 
@@ -65,7 +67,7 @@ unsigned long firstConnectAttemptAt = 0;
 
 bool waitingToSendConflictResolution = false;
 
-const String FirmwareVer = { "0.39" };  //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer = { "1.0" };  //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -80,7 +82,7 @@ char groupName[25];  //="PHUSSandbox";
 //int modelNumber; //oh no... removing this initialization causes a seg fault if you try to start the WiFi portal (by holding the botton button) and no other clients in the group are online. .......Even though this variable isn't used anywhere anymore 😭
 //.......wait, now that behavior is no longer there even if I comment out the initialization 🙃
 
-float photoresistorCalibrationVal = 0;  //this is used in version 3.1 (and maybe 3.0) to calibrate the photoresistor. If the value exists in EEPROM it updates this variable. If it remains 0 or less, auto-dim is disabled
+float lightSensorCalibrationVal = 0;  //this is used to calibrate the Photoresistor/VMEL7700. If the value exists in EEPROM it updates this variable. If it remains 0 or less, auto-dim is disabled.
 
 //END CLIENT SPECIFIC VARIABLES------------
 
@@ -102,6 +104,8 @@ Adafruit_NeoPixel lights(NUMPIXELS, 27, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel indicator(1, 4, NEO_GRB + NEO_KHZ800);  //only for hardware version 3.0
 int indicatorColor[3] = { 0, 0, 0 };
 bool evenSecond = false;
+
+bool firstLoopLightsUpdate=true; //flag to display the first color update and get us out of Rainbow mode.
 
 const char* mqtt_server = "mqtt.lumas.live";
 WiFiClient espClient;
@@ -139,11 +143,14 @@ int timeout = 30000;  //time in milliseconds between pings
 
 boolean isDark=false;
 
-long brightnessLastChangedAt = 0;
+unsigned long brightnessLastChangedAt = 0;
+unsigned long lightsLastUpdatedAt = 0;
+unsigned long ambientBrightnessLastReadAt = 0;
 
-int brightnessThresholdOffset = 100;  //as of 9/28 working experimental values are 100/0/300 (on v3.0). as of 12/2 almost working values for 3.1 are 200/0/600 and are set later in setup
-int goDimOffset = 0;
-int goBrightOffset = 300;
+bool pendingRemoteColorChange=false;
+
+float vemlGoDarkThreshold=4.5;
+float vemlGoBrightThreshold=5.0;
 
 //BELOW CODE IS FOR GOOGLE SHEETS "DATABASE" -- temporary solution that should hopefully replace EEPROM until we get a real database
 //String googleSheetURL ="https://docs.google.com/spreadsheets/d/1FMWpVuE9PxkHIEMgdaKUi_d1UH7pvPvcPBorXB6OsQY/gviz/tq?tqx=out:csv&sheet=Active&range="; //append a range, eg: "a1:b4" to use this URL
@@ -1851,66 +1858,16 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_IN1), checkEncoderPosition, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_IN2), checkEncoderPosition, CHANGE);
 
-  //pinMode(34,INPUT); //light sensor input
-
-
-  int darkThresholdValue = 1500;
-  if (analogRead(34) < darkThresholdValue) {
-    isDark = true;
-  } else if (analogRead(34) > darkThresholdValue + 40) {  //adjust this parameter for hysterisis
-    isDark = false;
-  }
-
-
-
   //finsish lights setup
   lights.begin();
   lights.clear();
-  //startup animation
-  /*
-  for(int i=0;i<200;i++){
-    lights.setBrightness(i);
-    for(int i=0;i<NUMPIXELS;i++){ //must set the color every time because I'm using setBrightness() as an animation and shouldn't be
-      lights.setPixelColor(i, lights.Color(getColor((1024/NUMPIXELS)*i,'r'),getColor((1024/NUMPIXELS)*i,'g'),getColor((1024/NUMPIXELS)*i,'b')));
-    }
-    lights.show();
-    if(i<100){ //slower at lower brigtnesses cause apparent brightness change is bigger per step
-      delay(20);
-    }else{
-      delay(10);
-    }
-    lastBrightness=i; //leave this variable at wherever we end up according to loop ctr end
-  }
-  lights.setBrightness(255); //added for v2 hearts. since we're no longer using this to change the brightness in other parts, we need to leave it at max
-  */
-
+  lights.show(); //immediately clear strip in case power-on noise turns on some lights
   lights.setBrightness(255);
 
-  //new startup animation
-  int ambientBrightness = analogRead(34);
-  if (ambientBrightness < 1400) {  //if we've booted in a dark room, it may be a reboot due to network failure. Don't flood the room with rainbow in the middle of the night (<3 u Kenzie)
-    //lights.setBrightness(5); //don't set it for the whole strip, or it affects the status LED too
-    rainbowBrightness = 5;
-  } else {
-    //lights.setBrightness(255);
-    rainbowBrightness = 255;
-  }
-  rainbowEffect(rainbowBrightness);  //start the animation here. Keep calling this at least every 10 milliseconds until network connection sequence has completed
 
-  //uncomment to blink on startup to remind myself it's sandbox
-  /*
-  for(int i=0;i<4;i++){
-    lights.clear();
-    lights.show();
-    delay(100);
-    rainbowEffect(rainbowBrightness);
-    delay(100);
-  }
-  */
 
-  //Serial.print("This client's MAC address is: ");
-  //Serial.println(WiFi.macAddress());
-
+  //Before doing anything with the LEDs, we have to get the ambient brightness to know whether they need to be dim.
+  //Because different versions use different light sensors, we first need to read EEPROM to know which hardware version we're on, and therefore how to read ambient brightness.
   Serial.println("Checking EEPROM configuration...");
   //read in client name before wifi setup because the variable is used for the network name
   EEPROM.begin(173);
@@ -1953,10 +1910,10 @@ void setup() {
   EEPROM.get(40, ch_MQTT_Password);
 
   if (EEPROM.read(56) == 'C') {  //if a calibration value is set, this will be "C". Otherwise, keep it's default value of 0 which indicates to disable auto-dim mode and just operate at max brightness
-    EEPROM.get(57, photoresistorCalibrationVal);
-    Serial.println("Using photoresistor calibration value from eeprom");
+    EEPROM.get(57, lightSensorCalibrationVal);
+    Serial.println("Using light sensor calibration value from eeprom");
   } else {
-    Serial.println("Photoresistor Calibration value not set");
+    Serial.println("light sensor Calibration value not set");
   }
 
   EEPROM.end();
@@ -1969,20 +1926,97 @@ void setup() {
     indicator.begin();
     indicator.clear();
     indicator.show();
-
-    brightnessThresholdOffset = 100;
-    goDimOffset = 0;
-    goBrightOffset = 300;
   }
 
-  if (strcmp(hardwareVersion, "3.1") == 0) {
-    brightnessThresholdOffset = 200;
-    goDimOffset = 0;
-    goBrightOffset = 600;
-  }
 
   //must set status LED after reading in EEPROM hardware version, since hardware for status LEDs are different depending on hardware version
   statusLEDs(100, 0, 0);
+
+
+
+
+  //set up VEML7700 over I2C
+  if (strcmp(hardwareVersion, "3.0")!=0 && strcmp(hardwareVersion, "3.1")!=0){ //>v3.1
+    //should *maybe* call Wire.begin(SDA,SCL), but the ESP32 board definition defines SDA/SCL, and adafruit calls Wire.begin() with those implicit values, so we don't *need* to. If I2C ever stops working, try doing that explicitly
+    veml.begin();
+    veml.setGain(VEML7700_GAIN_2);
+    veml.setIntegrationTime(VEML7700_IT_25MS); //initialize to very fast read time so we can read ambient brightness immediately and turn on the lights accordingly. Afterwards we will increase read time to get more accurate, stable readings
+  }
+
+
+  //check ambient brightness
+  if (strcmp(hardwareVersion, "3.0")==0 || strcmp(hardwareVersion, "3.1")==0){ //if we're on v3.0 or 3.1, which use a photoresistor for light sensing
+    int darkThresholdValue = 1400;
+    if (analogRead(34) < darkThresholdValue) {
+      isDark = true;
+    } else{
+      isDark = false;
+    }
+  }else{ //later versions which use the veml7700
+    float startupAmbientBrightness=veml.readLux(VEML_LUX_NORMAL_NOWAIT);
+    if(startupAmbientBrightness<3.0){
+      isDark=true;
+    }else{
+      isDark=false;
+    }
+
+    //Light Sensor Calibration routine: to be run once after manufacture
+    if(startupAmbientBrightness<0.1 && lightSensorCalibrationVal<=0){ //if we've booted in pitch black AND calibration value has not been set: initiate calibration routine.
+      for(int i=0;i<12;i++){ //set LEDs to our calibration color #904. We know that the calibration standard (which the equations were built on) should read 3.06 at this value in pitch black.
+        lights.setPixelColor(i, lights.Color(255,0,175));
+      }
+      lights.show();
+      veml.setIntegrationTime(VEML7700_IT_800MS,true); //set integration time to the value we'll use in the main program to ensure accurate reading
+      delay(10); //to be safe and ensure VEML updates with a new value before we read it
+
+      float measuredTotalLux=veml.readLux();
+
+      lightSensorCalibrationVal=3.06/measuredTotalLux;
+
+      //Now write it to EEPROM for future use
+      EEPROM.begin(173);
+      EEPROM.write(56, 'C');  //set this byte so the ESP32 knows to look for a calibration value in eeprom
+      EEPROM.put(57, lightSensorCalibrationVal);
+      EEPROM.commit();
+      EEPROM.end();
+      
+    }
+
+    veml.setIntegrationTime(VEML7700_IT_800MS,false); //now that we're done with that first quick measurement, elongate integration time for stability. Don't wait for sensor to update, since we want to turn the lights on ASAP and won't be reading it again within 800ms anyway
+  }
+
+
+
+  
+
+  //startup animation
+  if (isDark) {  //if we've booted in a dark room, it may be a reboot due to network failure. Don't flood the room with rainbow in the middle of the night (<3 u Kenzie)
+    //lights.setBrightness(5); //don't set it for the whole strip, or it affects the status LED too
+    rainbowBrightness = 5;
+  } else {
+    //lights.setBrightness(255);
+    rainbowBrightness = 255;
+  }
+  rainbowEffect(rainbowBrightness);  //start the animation here. Keep calling this at least every 10 milliseconds until network connection sequence has completed
+
+  //uncomment to blink on startup to remind myself it's sandbox
+  /*
+  for(int i=0;i<4;i++){
+    lights.clear();
+    lights.show();
+    delay(100);
+    rainbowEffect(rainbowBrightness);
+    delay(100);
+  }
+  */
+
+  //Serial.print("This client's MAC address is: ");
+  //Serial.println(WiFi.macAddress());
+
+  
+
+
+
 
 
   //setup_wifi(); //switching to on-demand config
@@ -2099,7 +2133,7 @@ void statusLEDs(int red, int green, int blue) {
     if (strcmp(hardwareVersion, "3.0") == 0) {
       indicator.setPixelColor(0, indicator.Color(red, green, blue));
       indicator.show();
-    } else if (strcmp(hardwareVersion, "3.1") == 0) {
+    } else{ //all future versions put it at the end of the strip
       lights.setPixelColor(12, indicator.Color(red, green, blue));
       lights.show();
     }
@@ -2117,7 +2151,7 @@ void statusLEDs(int red, int green, int blue) {
         if (strcmp(hardwareVersion, "3.0") == 0) {
           indicator.setPixelColor(0, indicator.Color(indicatorColor[0], indicatorColor[1], indicatorColor[2]));
           indicator.show();
-        } else if (strcmp(hardwareVersion, "3.1") == 0) {
+        } else{
           lights.setPixelColor(12, indicator.Color(indicatorColor[0], indicatorColor[1], indicatorColor[2]));
           lights.show();
         }
@@ -2126,7 +2160,7 @@ void statusLEDs(int red, int green, int blue) {
         if (strcmp(hardwareVersion, "3.0") == 0) {
           indicator.setPixelColor(0, indicator.Color(150, 60, 0));
           indicator.show();
-        } else if (strcmp(hardwareVersion, "3.1") == 0) {
+        } else{
           lights.setPixelColor(12, indicator.Color(150, 60, 0));
           lights.show();
         }
@@ -2239,7 +2273,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           firmwareUpdate();
         } else if (adminPayload == "alt") {
           Serial.println("updating from alt firmware");
-#define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/sandboxFirmware.bin"
+          #define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/sandboxFirmware.bin"
           WiFiClientSecure client;
           client.setInsecure();       //prevents having to update the CA certificate periodically
           statusLEDs(150, 150, 150);  //all white indicates we're in a firmware update
@@ -2302,12 +2336,12 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       if (command == "RESTART") {
         ESP.restart();
       }
-      if (command == "SET_LDR_CALIBRATION") {
-        photoresistorCalibrationVal = adminPayload.toFloat();  //update live value in memory
+      if (command == "SET_LIGHT_SENSOR_CALIBRATION") {
+        lightSensorCalibrationVal = adminPayload.toFloat();  //update live value in memory
         //update value in EEPROM
         EEPROM.begin(173);
         EEPROM.write(56, 'C');  //set this byte so the ESP32 knows to look for a calibration value in eeprom
-        EEPROM.put(57, photoresistorCalibrationVal);
+        EEPROM.put(57, lightSensorCalibrationVal);
         EEPROM.commit();
         EEPROM.end();
       }
@@ -2316,20 +2350,21 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           rawBrightness = analogRead(34); //photoresistor input
           float totalLux=getLux(rawBrightness); //linearize the total light hitting the sensor
           char msg[50];
-          snprintf(msg, sizeof(msg),"Total Lux: %.2f",totalLux);
+          snprintf(msg, sizeof(msg),"Total Lux: %.2f (approximated with LDR)",totalLux);
+          client.publish(consoleTopic,msg);
+        }else{
+          float totalLux=veml.readLux(VEML_LUX_NORMAL_NOWAIT);
+          char msg[50];
+          snprintf(msg, sizeof(msg),"Total Lux: %.2f (true lux from VEML)",totalLux);
           client.publish(consoleTopic,msg);
         }
       }
       if (command == "DEV") {  //to be used ONLY in development. This block should be blank in prod hearts.
-        brightnessThresholdOffset = adminPayload.substring(0, 3).toInt();
-        goDimOffset = adminPayload.substring(3, 6).toInt();
-        goBrightOffset = adminPayload.substring(6).toInt();
-        Serial.print("Changing auto-dim parameters... ");
-        Serial.print(brightnessThresholdOffset);
-        Serial.print("\t");
-        Serial.print(goDimOffset);
-        Serial.print("\t");
-        Serial.println(goBrightOffset);
+        client.publish(consoleTopic,"<3");
+        /*String val1  = adminPayload.substring(0, 3);  // chars 0,1,2
+        String val2 = adminPayload.substring(4, 7);
+        vemlGoDarkThreshold=val1.toFloat();
+        vemlGoBrightThreshold=val2.toFloat();*/
       }
     }
 
@@ -2448,8 +2483,9 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           //Serial.println(currentColorRemote);
           currentColor = currentColorRemote;
         }
+        pendingRemoteColorChange=true; //set this flag so that the loop knows to update the lights
 
-        lights.show();
+        lights.show(); //I think this is leftover from when the lights were actually updated here.
       }
 
       lastPingReceived = millis();
@@ -2522,14 +2558,13 @@ void reconnect() {
       strcat(sendVal, clientName);
       client.publish(groupTopic, sendVal);  // -1 indicates we just came online and are requesting other heart's value
 
-
     } else {
       //statusLEDs(100,0,0,0);
       //for now, this pattern means we are offline
       statusLEDs(100, 0, 0);
       Serial.print("failed, rc=");
       Serial.print(client.state());
-      Serial.println(" try again in  seconds");
+      Serial.println(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       delay(5000);
 
@@ -2732,81 +2767,110 @@ void loop() {
   //threshold = threshold + brightnessThresholdOffset;  //seems like the experiment was done slightly too bright. Experimentally, subtracting (adding?) from threshold makes it more reliably enter dim mode in dark rooms
 
   
+  
+  int stableBrightnessTimeout; //number of milliseconds to wait after the light state has changed before attempting to read ambient brightness
+  int timeBetweenReadings; //number of milliseconds to wait in between sensor checks
+  if (strcmp(hardwareVersion, "3.0")==0 || strcmp(hardwareVersion, "3.1")==0){
+    stableBrightnessTimeout=1000; //photoresistor takes ~1 second to stabalize
+    timeBetweenReadings=500; //photoresistor reads are continuous, so just poll it every half second
+  }else{
+    int integrationTime;
+    switch (veml.getIntegrationTime()) {
+      case VEML7700_IT_25MS: integrationTime=25; break;
+      case VEML7700_IT_50MS: integrationTime=50; break;
+      case VEML7700_IT_100MS: integrationTime=100; break;
+      case VEML7700_IT_200MS: integrationTime=200; break;
+      case VEML7700_IT_400MS: integrationTime=400; break;
+      case VEML7700_IT_800MS: integrationTime=800; break;
+    }
+    stableBrightnessTimeout=integrationTime*2+10; //wait for double the integration time (probably 800ms *2) to ensure the measurement happened over an entirely stable window
+    timeBetweenReadings=integrationTime+10; //only read as frequently as VEML updates it's readings
+  }
 
 
   bool updateLightsRequiredThisLoop = false;
-  if (digitalRead(23) && photoresistorCalibrationVal>0) {  //only do auto-dim if auto-dim switch is set. Also do not do auto-dim if we have no calibration value in EEPROM (if we attempted it, some Lumas may stay always dim which would be bad).
-    if (millis() - brightnessLastChangedAt > 1000) {  //TODO -- will probably want to do the same for Color last changed at //photoresistor takes some time to settle, so after changing brightness wait a little bit before attempting to read again (also just nice to user not to rapidly flash)
-      
-      int lightFromLED = getLightFromLED(c,b);
-      float lightFromLED_Lux=getLux(lightFromLED);
-      
-      rawBrightness = analogRead(34); //photoresistor input
+  if (digitalRead(23) && lightSensorCalibrationVal>0) {  //only do auto-dim if auto-dim switch is set. Also do not do auto-dim if we have no calibration value in EEPROM (if we attempted it, some Lumas may stay always dim which would be bad).
+    if ((millis() - lightsLastUpdatedAt > stableBrightnessTimeout) && (millis() - ambientBrightnessLastReadAt > timeBetweenReadings)) {  //1st term: photoresistor and VEML7700 both take some time to adjust to a new light level, so wait a little bit before attempting to read again (also just nice to user not to rapidly flash). 2nd term: Only read the sensor as often as it updates with new data
 
-      float totalLux=getLux(rawBrightness); //linearize the total light hitting the sensor
+      if (strcmp(hardwareVersion, "3.0")==0 || strcmp(hardwareVersion, "3.1")==0){ //PHOTORESISTOR VERSIONS
+        int lightFromLED = getLightFromLED(c,b);
+        float lightFromLED_Lux=getLux(lightFromLED);
+        
+        rawBrightness = analogRead(34); //photoresistor input
 
-      totalLux=totalLux*photoresistorCalibrationVal; //Calibration to account for sensor differences. This value is stored in eeprom and specific to each Lumas.
-      
-      float ambientLux = max(0.0f, totalLux-lightFromLED_Lux); //Subtract LED's contribution in Linear space
+        float totalLux=getLux(rawBrightness); //linearize the total light hitting the sensor
 
-      //map ambient Lux to a 0-100 scale
-      const float MAX_ROOM_LUX=50.0;
-      float normalized = ambientLux / MAX_ROOM_LUX;
-      normalized=constrain(normalized,0.0,1.0);
+        totalLux=totalLux*lightSensorCalibrationVal; //Calibration to account for sensor differences. This value is stored in eeprom and specific to each Lumas.
+        
+        float ambientLux = max(0.0f, totalLux-lightFromLED_Lux); //Subtract LED's contribution in Linear space
 
-      //gamma correction
-      float curved = pow(normalized,0.3); //use 0.3 for cube-root-like (even more resolution at the top). 0.5 default. 0.3 is good on v3.0
-      int mapped = curved*100;
-      int ambientBrightness = constrain(mapped,0,100);
+        //map ambient Lux to a 0-100 scale
+        const float MAX_ROOM_LUX=50.0;
+        float normalized = ambientLux / MAX_ROOM_LUX;
+        normalized=constrain(normalized,0.0,1.0);
 
-
-      if(ambientBrightness<40){
-        if(!isDark){ //if it just became dark
-          updateLightsRequiredThisLoop=true;
-          brightnessLastChangedAt = millis();
-        }
-        isDark=true;
-      }
-
-      if(ambientBrightness>50){
-        if(isDark){ //if it just became bright
-          updateLightsRequiredThisLoop=true;
-          brightnessLastChangedAt = millis();
-        }
-        isDark=false;
-      }
+        //gamma correction
+        float curved = pow(normalized,0.3); //use 0.3 for cube-root-like (even more resolution at the top). 0.5 default. 0.3 is good on v3.0
+        int mapped = curved*100;
+        int ambientBrightness = constrain(mapped,0,100);
 
 
-
-      /* OLD POLYNOMIAL-BASED VERSION
-      if (rawBrightness < threshold - goDimOffset) { //if room is dark
-        //Serial.println("dim");
-        if (isDark == false) {  //if it just became dark
-          updateLightsRequiredThisLoop = true;
-          brightnessLastChangedAt = millis();
-        }
-        isDark = true;
-      } else { //if room is bright
-        //if(rawBrightness>threshold+goBrightOffset){ //hysterisis attempt
-        int thresholdValDim = 1000;  //default val that's close to right either way in case if statement fails
-        if (strcmp(hardwareVersion, "3.0") == 0) {
-          thresholdValDim = 1410;
-        } else if (strcmp(hardwareVersion, "3.1") == 0) {
-          thresholdValDim = 988 + brightnessThresholdOffset;
-        }
-
-        if (rawBrightness > thresholdValDim + goBrightOffset) {  //calcs at low brightness are prone to being wrong, and low brightness isn't much affected by color, so just compare to a static value that seems to be right according to data collection for brightness level 6
-          //Serial.print("bright");
-          if (isDark == true) {  //if it just became bright
-            updateLightsRequiredThisLoop = true;
+        if(ambientBrightness<40){
+          if(!isDark){ //if it just became dark
+            updateLightsRequiredThisLoop=true;
             brightnessLastChangedAt = millis();
           }
-          isDark = false;
+          isDark=true;
         }
+
+        if(ambientBrightness>50){
+          if(isDark){ //if it just became bright
+            updateLightsRequiredThisLoop=true;
+            brightnessLastChangedAt = millis();
+          }
+          isDark=false;
+        }
+
+      }else{ //VEML7700 VERSIONS
+
+        float rawSensorLux = veml.readLux(VEML_LUX_NORMAL_NOWAIT);
+
+        rawSensorLux=rawSensorLux*lightSensorCalibrationVal; //Calibration to account for sensor differences. This value is stored in eeprom and specific to each Lumas.
+
+        float calculatedSelfLux = getLightFromLED_VEML(c,b);
+        float ambientBrightness=rawSensorLux-calculatedSelfLux;
+        if(ambientBrightness<0){
+          ambientBrightness=0;
+        }
+
+        if(ambientBrightness<4.0){ //vemlGoDarkThreshold
+          if(!isDark){ //if it just became dark
+            updateLightsRequiredThisLoop=true;
+            brightnessLastChangedAt = millis();
+          }
+          isDark=true;
+        }
+        if(ambientBrightness>5.0){ //vemlGoBrightThreshold
+          if(isDark){ //if it just became bright
+            updateLightsRequiredThisLoop=true;
+            brightnessLastChangedAt = millis();
+          }
+          isDark=false;
+        }
+        /*String x=String(ambientBrightness);
+        client.publish(consoleTopic,x.c_str());
+        String y="Calibration Val: "+String(lightSensorCalibrationVal);
+        client.publish(consoleTopic,y.c_str());*/
+
       }
-      */
 
 
+
+
+
+
+
+      ambientBrightnessLastReadAt=millis();
     }
   } else {         //if we're not in auto-dim mode
     if (isDark) {  //if we were dimmed, un-dim
@@ -2899,12 +2963,16 @@ void loop() {
   }
 
   //if nothing changed, no need to re-set the strip. (The only real point in doing this is to prevent v3.0 hearts without the level shifter from flickering so much, cause they flicker a small percentage of the time but only during strip updates. If this line weren't there, strip updates would be constant)
-  //actually, there's a chance this helps WiFi reception too
-  if ((posChangedBy != 0 || !brightnessChangedThisLoop || updateLightsRequiredThisLoop) && ((!firstConnectAttempt && millis() - firstConnectAttemptAt > 1000) || currentColor != 0)) {  //!firstConnectAttempt means we've attempted broker connection already: only start setting the color if we've already connected to the broker (this prevents it from always flashing red on boot before syncing up). Give it 1 second to receive remote color, or as soon as the color iesn't the default (must've beenr receicved early)
+  //actually, there's a chance this helps WiFi reception too. And noise on the i2c line.
+  if ((posChangedBy != 0 || brightnessChangedThisLoop || updateLightsRequiredThisLoop) && ((!firstConnectAttempt && millis() - firstConnectAttemptAt > 1000) || currentColor != 0) || firstLoopLightsUpdate || pendingRemoteColorChange) {  //!firstConnectAttempt means we've attempted broker connection already: only start setting the color if we've already connected to the broker (this prevents it from always flashing red on boot before syncing up). Give it 1 second to receive remote color, or as soon as the color iesn't the default (must've beenr receicved early)
     for (int i = 0; i < 12; i++) {
       lights.setPixelColor(i, lights.Color(stripColors[i][0] * (brighnessFactor / 4096.0), stripColors[i][1] * (brighnessFactor / 4096.0), stripColors[i][2] * (brighnessFactor / 4096.0)));
       lights.show();
     }
+    firstLoopLightsUpdate=false;
+    pendingRemoteColorChange=false;
+
+    lightsLastUpdatedAt=millis();
   }
   /*Serial.println(stripColors[0][0]);
   Serial.println(stripColors[0][1]);
@@ -2979,6 +3047,63 @@ float getLightFromLED(int color, int brightness) {
     
     return interpolatedADC;
 }
+
+
+//For versions with VEML7700 light sensor (>3.1)
+float getLightFromLED_VEML(int color, int brightness){
+  //This function uses equations to approximate (with generally >95% accuracy) the experimental results of how many lux hitting the light sensor are from the LEDs at various colors and brightnesses.
+  //1. It finds the right "bucket" for the given color, and chooses which line to use in order to estimate what the *LED contribution at max brightness* is for that color (the misc line equations represent an x/y plot of color/light reading at max brightness in a dark room
+  //2. Using that max value, it generates an equation for the line of brightness for this specific color -- which should pass through point (20,0) and (255,[output from step 1]) on an x/y graph of measured Lux/LED brightness level
+
+  //Stage 1 is a graph of "light hitting sensor in a dark room at max brightness" (y) vs "color (0-1024)" (x)
+  float m_stage1=0; //slope
+  float b_stage1=0; //y-intercept
+
+  //Based on the given color, which equation should we use to find the max brightness read by our lux meter at that color?
+  if(color<7){
+    m_stage1=0;
+    b_stage1=1.05;
+  }else if(color<170){
+      m_stage1=0.0173;
+      b_stage1=0.9107;
+  }else if(color<340){
+      m_stage1=-0.0053;
+      b_stage1=4.7071;
+  }else if(color<510){
+      m_stage1=0.0195;
+      b_stage1=-3.8099;
+  }else if(color<680){
+      m_stage1=-0.0172;
+      b_stage1=14.939;
+  }else if(color<850){
+      m_stage1=0.0049;
+      b_stage1=0.0392;
+  }else if(color<1013){
+      m_stage1=-0.0205;
+      b_stage1=21.583;
+  }else{ //1013-1024
+      m_stage1=0;
+      b_stage1=0.78;
+  }
+
+  float maxLuxAtThisColor=m_stage1*color+b_stage1;
+
+  //stage 2 is a graph for just one color. Graphing "light hitting sensor in a dark room" (y) vs "LED brightness out of 255" (x)
+  
+  //get the equation of the line that passes through (20,0) and (255,[stage 1 output])
+  float m_stage2=(maxLuxAtThisColor-0)/(255-20);
+  float b_stage2=0-m_stage2*20;
+
+  //approximate Lux contribution of LEDs at given values:
+  float result=m_stage2*brightness+b_stage2;
+  if(result<0){
+    result=0;
+  }
+  return result;
+
+}
+
+
 
 //updating this function to use coefficients from the new v3.1 experiment. Same ehhh method of generating the curve fit though.
 
