@@ -46,6 +46,8 @@ String macAddress;
 
 unsigned long devTimer = 0;
 
+bool altFirmwareUpdateRequested=false;
+
 //for use in changing colors/brightness
 int newColorRed;
 int newColorGreen;
@@ -67,7 +69,7 @@ unsigned long firstConnectAttemptAt = 0;
 
 bool waitingToSendConflictResolution = false;
 
-const String FirmwareVer = { "1.0" };  //used to compare to GitHub firmware version to know whether to update
+const String FirmwareVer = { "1.1" };  //used to compare to GitHub firmware version to know whether to update
 
 
 //CLIENT SPECIFIC VARIABLES----------------
@@ -81,6 +83,7 @@ bool otherClientsOnlineStatus[MAX_GROUP_MEMBERS + 1] = { false };
 char groupName[25];  //="PHUSSandbox";
 //int modelNumber; //oh no... removing this initialization causes a seg fault if you try to start the WiFi portal (by holding the botton button) and no other clients in the group are online. .......Even though this variable isn't used anywhere anymore 😭
 //.......wait, now that behavior is no longer there even if I comment out the initialization 🙃
+// 8/15/26 haha, it's back! ...And this time it even crashes if there are other clients online.
 
 float lightSensorCalibrationVal = 0;  //this is used to calibrate the Photoresistor/VMEL7700. If the value exists in EEPROM it updates this variable. If it remains 0 or less, auto-dim is disabled.
 
@@ -1264,7 +1267,7 @@ void setup_wifi() {
   if (WiFi.status() != WL_CONNECTED) {  //launch wifi manager in this block
     //String networkName=strcat(strcat(clientName,"'s Lumas Setup - "),WiFi.macAddress().c_str());
 
-    char bufNetName[30];
+    char bufNetName[41];
     strcpy(bufNetName, clientName);
     strcat(bufNetName, "'s Heart Setup");
     String networkName = String(bufNetName);
@@ -1633,6 +1636,17 @@ void BubbleSort(char arry[][25], int m) {  //m is number of elements
   }
 }
 
+void altFirmwareUpdateChecker(){
+  if(altFirmwareUpdateRequested){
+    WiFiClientSecure clientForHTTPUpdate;
+    clientForHTTPUpdate.setInsecure();       //prevents having to update the CA certificate periodically
+    statusLEDs(150, 150, 150);  //all white indicates we're in a firmware update
+    //httpUpdate.setLedPin(LED_BUILTIN, LOW);
+    //httpUpdate.rebootOnUpdate(false); //temp debugging
+    t_httpUpdate_return ret = httpUpdate.update(clientForHTTPUpdate, "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/sandboxFirmware.bin");
+  }   
+}
+
 void firmwareUpdate() {
 
 #define URL_fw_Version "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/currentFirmwareVersion.txt"
@@ -1853,6 +1867,8 @@ void setup() {
   esp_ota_mark_app_valid_cancel_rollback();
 
   Serial.begin(9600);
+  delay(1000);
+  Serial.printf("Reset reason: %d\n", esp_reset_reason());
 
   encoder = new RotaryEncoder(ENCODER_PIN_IN1, ENCODER_PIN_IN2, RotaryEncoder::LatchMode::TWO03);
   attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_IN1), checkEncoderPosition, CHANGE);
@@ -2233,7 +2249,11 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
   } else if (strcmp(topic, dbUpdateTopic) == 0) {
     if (strcmp(payloadCStr, "DATABASE_UPDATE") == 0) {  //this is the same as the admin command, but the webapp doesn't have permission to send to /admin, so we can receive it here too. This also targets just this group.
       Serial.println("Will update all local variables with the values from the AWS DB...");
-      loadClientSpecificVariables();
+
+      char oldgroupName[25];
+      strcpy(oldgroupName,groupName); //store group name before update so we can see if it changed
+
+      loadClientSpecificVariables(); //TODO: I'm pretty sure this is an accidental duplicate of the call below and not necessary. Try to delete it and make sure it doesn't change anything.
       //unsubscribe from old topics in case they were updated
       Serial.print("Unsubscribing from group ");
       Serial.println(groupTopic);
@@ -2241,6 +2261,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       client.unsubscribe(multiColorTopic);
       client.unsubscribe(onlineStatusTopic);
       client.unsubscribe(dbUpdateTopic);
+
       updateTopicVariables();
       loadClientSpecificVariables();  //this updates variables like the array of other online clients
       //now subscribe to new ones
@@ -2250,6 +2271,14 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
       client.subscribe(dbUpdateTopic);
       Serial.print("Now subscribed to group ");
       Serial.println(groupTopic);
+
+
+      if(strcmp(oldgroupName,groupName)!=0){ //if the group name changed, we have to update the Last Will message
+        client.disconnect(); //LWT can't be updated, so we must disconnect from it first
+        firstConnectAttempt=false; //this will be our first connection to the new group, so set this to false so that we announce our presence
+        reconnect(); //let the existing function call handle reconnect with new variables
+      }
+
     }
   } else if (strcmp(topic, adminTopic) == 0) {  //an admin command
     String strPayload = String(payloadCStr);
@@ -2273,12 +2302,18 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
           firmwareUpdate();
         } else if (adminPayload == "alt") {
           Serial.println("updating from alt firmware");
-          #define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/sandboxFirmware.bin"
+          //#define URL_fw_Bin "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/sandboxFirmware.bin" //shouldn't redefine....
+
+          //Used to be done in this callback, but then moved it to the loop as part of best practice. ....Actually I thought it was broken here, but it turned out to be an entierly different issue
+          altFirmwareUpdateRequested=true;
+          /*
           WiFiClientSecure client;
           client.setInsecure();       //prevents having to update the CA certificate periodically
           statusLEDs(150, 150, 150);  //all white indicates we're in a firmware update
           //httpUpdate.setLedPin(LED_BUILTIN, LOW);
-          t_httpUpdate_return ret = httpUpdate.update(client, URL_fw_Bin);
+          Serial.println(ESP.getFreeHeap());
+          t_httpUpdate_return ret = httpUpdate.update(client, "https://raw.githubusercontent.com/BlaineAtkins/Lumas/main/Firmware/sandboxFirmware.bin");
+          */
         } else {
           Serial.println("invalid update source specified. Pass no parameter, or \"alt\"");
         }
@@ -2355,7 +2390,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
         }else{
           float totalLux=veml.readLux(VEML_LUX_NORMAL_NOWAIT);
           char msg[50];
-          snprintf(msg, sizeof(msg),"Total Lux: %.2f (true lux from VEML)",totalLux);
+          snprintf(msg, sizeof(msg),"Total Lux: %.2f (true lux (uncalibrated) from VEML)",totalLux);
           client.publish(consoleTopic,msg);
         }
       }
@@ -2416,7 +2451,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
         if (multiColorMode) {
           //create an array of client MAC addresses including our own to be sorted
           char clientsIncludingMe[numOtherClientsInGroup + 1][25];
-          memcpy(clientsIncludingMe, otherClientsInGroup, numOtherClientsInGroup * 20);
+          memcpy(clientsIncludingMe, otherClientsInGroup, numOtherClientsInGroup * 25); //BLAINE HELLOOO -- changing this from 20 to 25 -- this seems to have made it not crash (and worked on smaller groups), but I just tested a group of 5 and it's not working properly. Or wait...... I don't thinkn I actually updated the code lol. Either that or I missed fixing the other version of this, which I just did now. So test again, but it should work.
           strcpy(clientsIncludingMe[numOtherClientsInGroup], WiFi.macAddress().c_str());
           BubbleSort(clientsIncludingMe, numOtherClientsInGroup + 1);  //sort by MAC first in order to ensure consistant placement of each user across hearts
 
@@ -2474,7 +2509,7 @@ void Received_Message(char* topic, byte* payload, unsigned int length) {
             //Serial.println();
           }
 
-          for (int i = 0; i < NUMPIXELS; i++) {
+          for (int i = 0; i < 12; i++) { //changed from numpixels to 12 since numpixels is now 13. I think this was causing an overflow
             //lights.setPixelColor(i, lights.Color(getColor(currentColorRemote,'r'),getColor(currentColorRemote,'g'),getColor(currentColorRemote,'b')));
             stripColors[i][0] = getColor(currentColorRemote, 'r');
             stripColors[i][1] = getColor(currentColorRemote, 'g');
@@ -2579,7 +2614,6 @@ void reconnect() {
 
 
 void pingAndStatus() {
-
   //BELOW IS OLD ONLINE DETERMINATION USING HEARTBEAT. SCROLL FURTHER DOWN FOR NEW METHOD USING ONLINE STATUS MQTT TOPIC
   /*
   if(millis()-lastPingReceived>timeout+5000){
@@ -2639,6 +2673,9 @@ int shortPressTime = 50;
 
 void loop() {
   delay(1);  //give background WiFi tasks a chance to run (seems like they run fine without it, but this is best practice)
+
+  altFirmwareUpdateChecker(); //checks if we are supposed to perform a firmware update from the alt source (triggered from MQTT callback)
+
   if (!digitalRead(14)) {
     if (!btnCurrentlyPressed) {
       btnCurrentlyPressed = true;
@@ -2918,7 +2955,7 @@ void loop() {
 
     //create an array of client MAC addresses including our own to be sorted
     char clientsIncludingMe[numOtherClientsInGroup + 1][25];
-    memcpy(clientsIncludingMe, otherClientsInGroup, numOtherClientsInGroup * 20);
+    memcpy(clientsIncludingMe, otherClientsInGroup, numOtherClientsInGroup * 25);
     strcpy(clientsIncludingMe[numOtherClientsInGroup], WiFi.macAddress().c_str());
     BubbleSort(clientsIncludingMe, numOtherClientsInGroup + 1);  //sort by MAC first in order to ensure consistant placement of each user across hearts
 
